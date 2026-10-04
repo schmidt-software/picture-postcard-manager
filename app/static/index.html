@@ -41,6 +41,31 @@
       <p id="empty-hint" hidden data-i18n="emptyPostcards">No postcards yet.</p>
     </section>
 
+    <section id="view-detail" class="view" hidden aria-labelledby="detail-title">
+      <div class="detail-heading">
+        <h2 id="detail-title" tabindex="-1"></h2>
+        <div class="actions">
+          <button type="button" id="detail-back" data-i18n="backToOverview">Back to overview</button>
+          <button type="button" id="detail-edit" data-i18n="edit">Edit</button>
+        </div>
+      </div>
+      <p id="detail-status" role="status" aria-live="polite"></p>
+      <article id="detail-content" hidden>
+        <div id="detail-photos" class="detail-photos"></div>
+        <dl id="detail-metadata" class="detail-metadata"></dl>
+        <section class="detail-sharing" aria-labelledby="share-heading">
+          <h3 id="share-heading" data-i18n="sharePostcard">Share postcard</h3>
+          <label for="share-url" data-i18n="shareLink">Link to this postcard</label>
+          <div class="share-controls">
+            <input id="share-url" type="text" readonly>
+            <button type="button" id="copy-share-link" data-i18n="copyLink">Copy link</button>
+          </div>
+          <p id="share-status" role="status" aria-live="polite"></p>
+          <p data-i18n="shareAccessHint">Recipients must be able to reach this application and have any required access.</p>
+        </section>
+      </article>
+    </section>
+
     <section id="view-edit" class="view" hidden>
       <h2 id="form-title" data-i18n="newPostcard">New postcard</h2>
       <form id="postcard-form" novalidate>

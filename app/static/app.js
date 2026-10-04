@@ -5,6 +5,10 @@ const translations = window.UI_TRANSLATIONS;
 const LANGUAGE_STORAGE_KEY = "picture-postcard-manager-language";
 let currentLanguage = "en";
 let currentMessage = null;
+let currentDetail = null;
+let detailState = "";
+let detailRequest = 0;
+let shareState = "";
 
 function translate(key, params = {}) {
   const value = translations[currentLanguage][key] ?? translations.en[key] ?? key;
@@ -141,6 +145,7 @@ function applyLanguage(language) {
   renderTagEditor();
   renderMessage();
   renderConfirmation();
+  renderDetail();
   try {
     localStorage.setItem(LANGUAGE_STORAGE_KEY, currentLanguage);
   } catch {
@@ -182,12 +187,132 @@ async function api(path, options = {}) {
 }
 
 function showView(name) {
+  if (name !== "detail") detailRequest += 1;
   if (name !== "edit") resetUploads();
   document.querySelectorAll(".view").forEach((v) => (v.hidden = v.id !== `view-${name}`));
   document.querySelectorAll("nav button").forEach((b) =>
     b.classList.toggle("active", b.dataset.view === name));
   if (name === "browse") loadList();
 }
+
+function navigate(fragment) {
+  const url = new URL(window.location.href);
+  url.hash = fragment;
+  window.history.pushState(null, "", url);
+  return route();
+}
+
+function route() {
+  const fragment = window.location.hash.slice(1);
+  if (fragment.startsWith("postcards/")) {
+    const id = fragment.slice("postcards/".length);
+    if (!/^[1-9]\d*$/.test(id) || id.length > 19
+        || (id.length === 19 && id > "9223372036854775807")) {
+      return openDetail(null);
+    }
+    return openDetail(id);
+  }
+  if (fragment === "new") {
+    openForm();
+  } else {
+    showView(fragment === "data" ? "data" : "browse");
+  }
+}
+
+// --- Detail page ------------------------------------------------------------
+
+function renderDetail() {
+  $("#detail-title").textContent = currentDetail
+    ? translate("postcardDetails", { id: currentDetail.id })
+    : translate("detailPage");
+  $("#detail-status").textContent = detailState ? translate(detailState) : "";
+  $("#detail-status").hidden = !detailState;
+  $("#detail-content").hidden = !currentDetail;
+  $("#detail-edit").hidden = !currentDetail;
+  $("#share-status").textContent = shareState ? translate(shareState) : "";
+  document.querySelectorAll("[data-postcard-id]").forEach((row) => {
+    row.setAttribute("aria-label", translate("viewPostcard", { id: row.dataset.postcardId }));
+  });
+  if (!currentDetail) return;
+
+  const postcard = currentDetail;
+  const photos = [imagePreview(postcard.front_image_path, "frontImage", true)];
+  if (postcard.back_image_path) {
+    photos.push(imagePreview(postcard.back_image_path, "backImage", true));
+  }
+  $("#detail-photos").replaceChildren(...photos);
+  const metadata = [];
+  for (const field of ["place", "region", "year", "description", "tags"]) {
+    const value = postcard[field];
+    if (!value || (Array.isArray(value) && !value.length)) continue;
+    const term = document.createElement("dt");
+    term.textContent = translate(field);
+    const description = document.createElement("dd");
+    if (field === "tags") {
+      const tags = document.createElement("ul");
+      tags.className = "tag-list postcard-tags";
+      for (const tag of value) {
+        const chip = document.createElement("li");
+        chip.className = "tag";
+        chip.textContent = tag;
+        tags.append(chip);
+      }
+      description.append(tags);
+    } else {
+      description.textContent = value;
+    }
+    metadata.push(term, description);
+  }
+  $("#detail-metadata").replaceChildren(...metadata);
+}
+
+async function openDetail(id) {
+  const request = ++detailRequest;
+  currentDetail = null;
+  shareState = "";
+  detailState = id ? "detailLoading" : "detailInvalid";
+  showView("detail");
+  renderDetail();
+  $("#detail-title").focus();
+  if (!id) return;
+  try {
+    const postcard = await api(`/api/postcards/${id}`);
+    if (request !== detailRequest) return;
+    currentDetail = postcard;
+    detailState = "";
+    const url = new URL(window.location.href);
+    url.hash = `postcards/${postcard.id}`;
+    $("#share-url").value = url.href;
+    renderDetail();
+  } catch (error) {
+    if (request !== detailRequest) return;
+    detailState = error.message === "postcard not found" ? "detailMissing" : "detailLoadFailed";
+    renderDetail();
+    if (detailState === "detailLoadFailed") showApiError(error);
+  }
+}
+
+$("#detail-back").addEventListener("click", () => navigate("browse"));
+$("#detail-edit").addEventListener("click", () => {
+  if (currentDetail) openForm(currentDetail);
+});
+$("#copy-share-link").addEventListener("click", async () => {
+  if (!currentDetail) return;
+  const postcard = currentDetail;
+  const url = $("#share-url").value;
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+    await navigator.clipboard.writeText(url);
+    if (currentDetail !== postcard) return;
+    shareState = "linkCopied";
+  } catch {
+    if (currentDetail !== postcard) return;
+    shareState = "copyLinkFallback";
+    $("#share-url").focus();
+    $("#share-url").select();
+  }
+  $("#share-status").textContent = translate(shareState);
+});
 
 // --- Tags -------------------------------------------------------------------
 
@@ -234,8 +359,15 @@ $("#tag-input").addEventListener("keydown", (event) => {
 
 // --- Browse -----------------------------------------------------------------
 
-function imagePreview(imagePath, side) {
-  const cell = document.createElement("td");
+function imagePreview(imagePath, side, fullSize = false) {
+  const cell = document.createElement(fullSize ? "figure" : "td");
+  if (fullSize) {
+    cell.className = "detail-photo";
+    const caption = document.createElement("figcaption");
+    caption.dataset.i18n = side;
+    caption.textContent = translate(side);
+    cell.append(caption);
+  }
   const fallback = document.createElement("span");
   fallback.className = "image-fallback";
   fallback.dataset.i18n = imagePath ? "imageUnavailable" : "noImage";
@@ -255,12 +387,14 @@ function imagePreview(imagePath, side) {
       || !["http:", "https:"].includes(url.protocol)) return cell;
 
   const image = document.createElement("img");
-  image.className = "postcard-thumbnail";
+  image.className = fullSize ? "postcard-photo" : "postcard-thumbnail";
   image.dataset.i18nAlt = side;
   image.alt = translate(side);
-  image.loading = "lazy";
-  image.width = 96;
-  image.height = 72;
+  image.loading = fullSize ? "eager" : "lazy";
+  if (!fullSize) {
+    image.width = 96;
+    image.height = 72;
+  }
   image.addEventListener("load", () => {
     image.hidden = false;
     image.style.visibility = "visible";
@@ -307,7 +441,16 @@ async function loadList() {
       const updatedCell = document.createElement("td");
       updatedCell.textContent = p.updated_at;
       tr.append(updatedCell);
-      tr.addEventListener("click", () => openForm(p));
+      tr.tabIndex = 0;
+      tr.setAttribute("aria-label", translate("viewPostcard", { id: p.id }));
+      tr.dataset.postcardId = p.id;
+      tr.addEventListener("click", () => navigate(`postcards/${p.id}`));
+      tr.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          navigate(`postcards/${p.id}`);
+        }
+      });
       return tr;
     }));
     $("#empty-hint").hidden = items.length > 0;
@@ -355,7 +498,7 @@ $("#postcard-form").addEventListener("submit", async (e) => {
     if (id) await api(`/api/postcards/${id}`, { method: "PUT", body: JSON.stringify(data) });
     else await api("/api/postcards", { method: "POST", body: JSON.stringify(data) });
     showMessage("saved");
-    showView("browse");
+    navigate("browse");
   } catch (err) {
     showApiError(err);
   }
@@ -367,13 +510,16 @@ $("#delete").addEventListener("click", async () => {
   try {
     await api(`/api/postcards/${id}`, { method: "DELETE" });
     showMessage("deleted");
-    showView("browse");
+    navigate("browse");
   } catch (err) {
     showApiError(err);
   }
 });
 
-$("#cancel").addEventListener("click", () => showView("browse"));
+$("#cancel").addEventListener("click", () => {
+  const id = $("#postcard-form").elements.id.value;
+  return navigate(id && currentDetail?.id === Number(id) ? `postcards/${id}` : "browse");
+});
 $("#postcard-form").elements.front_image_path.addEventListener("input", (event) => {
   if (event.target.value.trim()) {
     setValidation("front-image-error", event.target, "requiredFrontImage", false);
@@ -528,7 +674,7 @@ $("#import-file").addEventListener("change", () => {
 });
 
 document.querySelectorAll("nav button").forEach((b) =>
-  b.addEventListener("click", () => (b.id === "nav-new" ? openForm() : showView(b.dataset.view))));
+  b.addEventListener("click", () => navigate(b.id === "nav-new" ? "new" : b.dataset.view)));
 
 let searchTimer;
 $("#search").addEventListener("input", () => {
@@ -536,4 +682,6 @@ $("#search").addEventListener("input", () => {
   searchTimer = setTimeout(loadList, 250);
 });
 
-loadList();
+window.addEventListener("hashchange", route);
+window.addEventListener("popstate", route);
+route();

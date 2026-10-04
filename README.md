@@ -146,6 +146,27 @@ broken-image icon. External hosts, `file:` and active-content URLs are not loade
 Filesystem paths that are not served by the app cannot be previewed; their
 stored values are unchanged.
 
+## Postcard detail pages and sharing
+
+Click a row in the overview (or focus it and press Enter) to open its detail page.
+Photos are displayed prominently alongside the stored place, region, year,
+description and tags; empty optional fields are omitted. Images use the same
+same-origin restrictions and unavailable-image fallbacks as the overview.
+Choose **Edit** to change the postcard, or **Back to overview** to return.
+
+Each postcard has a direct link such as `http://127.0.0.1:8000/#postcards/42`.
+Opening or reloading it fetches that postcard from the API. Browser Back/Forward
+and manually changing the URL fragment work without server-side page routing.
+**Copy link** copies the URL to the clipboard; if clipboard access is unavailable
+or denied, the visible read-only URL is selected for manual copying.
+
+Sharing does not make the application publicly reachable or bypass access
+controls. Recipients need network access to the installation and any credentials
+required by its reverse proxy. A localhost link is only useful on the computer
+running the app; for other recipients use the installation's reachable hostname.
+Missing/deleted postcards and invalid links display a clear message instead of
+an edit form or stale information.
+
 ## Running locally with Docker Compose
 
 Install Docker with the Compose plugin, start the Docker daemon, then run these

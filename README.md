@@ -30,7 +30,7 @@ app/
   images.py        Validation and storage of uploaded images
   static/          Web UI (index.html, app.js, languages.js, style.css)
 tests/             unittest-based API, database and localization tests
-data/              Default location of the SQLite database and images/ (git-ignored)
+data/              Default local (non-Docker) database and images/ location (git-ignored)
 Dockerfile         Container image for server deployment
 compose.yaml       Docker Compose setup
 ```
@@ -112,7 +112,7 @@ is running discards that upload's result.
 - Uploaded files are not deleted when a postcard is deleted or its path changed.
 
 Images are stored in `PPM_IMAGE_DIR`, which defaults to an `images` directory next
-to the database file (`data/images` locally, `/data/images` in Docker). Only files
+to the database file (`data/images` locally, `/data/images` in the Docker volume). Only files
 with generated names that are regular files (not symlinks) directly inside this
 directory and whose content matches their extension are served under `/images/`.
 
@@ -167,16 +167,145 @@ running the app; for other recipients use the installation's reachable hostname.
 Missing/deleted postcards and invalid links display a clear message instead of
 an edit form or stale information.
 
-## Running on a server
+## Running locally with Docker Compose
+
+Install Docker with the Compose plugin, start the Docker daemon, then run these
+commands from the checkout directory:
 
 ```sh
 docker compose up -d --build
+docker compose ps
 ```
 
-The database is stored in `./data/postcards.db` and uploaded images in
-`./data/images/` on the host; both persist in the mounted `/data` volume.
-The application has no built-in authentication; when exposing it to a network,
-put it behind a reverse proxy (e.g. Caddy, nginx) that provides TLS and access control.
+Open <http://127.0.0.1:8000>. Compose publishes **only on the host's loopback
+interface**, not to the local network. If port 8000 is occupied, use
+`PPM_PORT=18008 docker compose up -d --build` and open <http://127.0.0.1:18008>.
+To keep the chosen host port across subsequent commands, put `PPM_PORT=18008` in
+a local `.env` file or export it in your shell. Inside the container the app
+always listens on `0.0.0.0:8000`; Compose's `PPM_PORT` selects the host port only.
+
+Data is stored in the Compose-managed named volume `postcard-data`, mounted at
+`/data` in the container (Docker name `picture-postcard-manager_postcard-data`;
+see `docker volume ls`). The container stores the SQLite database at
+`/data/postcards.db` and uploaded images in `/data/images/`. The volume lives in
+Docker's storage outside the container filesystem and outside this checkout.
+It is independent of the checkout directory name because `compose.yaml` sets the
+project name. Startup creates the database parent and image directories,
+including with empty storage. Directory or SQLite initialization failures stop
+startup with an error in `docker compose logs app`; image upload failures are
+returned as HTTP errors and logged. The healthcheck reads the postcard API using
+Python's standard library. Check startup or health failures with
+`docker compose ps` and `docker compose logs --tail=100 app`.
+
+A named volume is used instead of a host bind mount because SQLite databases
+newly created on Docker Desktop (macOS) bind mounts can fail on the first write
+with `attempt to write a readonly database` (`SQLITE_READONLY_DBMOVED`). The
+`./data` directory is used only when running directly with `python3 -m app`.
+
+The build context is allowlisted in `.dockerignore`: local data, images, Git
+metadata, backups, environment files and Python caches are not sent to the
+builder or included in the image.
+
+### Shutdown, restart, rebuild and update
+
+```sh
+docker compose stop                           # Stop; retain the container and data
+docker compose start                          # Start the stopped container
+docker compose restart                        # Restart without changing the image
+docker compose down                           # Remove containers/network, retain the volume
+docker compose up -d --build                  # Rebuild and start again
+docker compose up -d --build --force-recreate # Explicitly replace the container
+```
+
+**Never run `docker compose down -v` or `docker volume rm`** for this project
+unless you intend to delete all postcards and images; both remove the volume.
+
+To update, make a complete backup below first (including before any database
+migration), then update the checkout and rebuild:
+
+```sh
+git pull --ff-only
+docker compose up -d --build
+docker compose ps
+```
+
+Restarts, container recreation and image rebuilds keep the volume and its data.
+
+### Complete backup and restore
+
+**JSON export is not a full backup:** it contains records and image paths, but
+no image bytes. A full backup must copy the SQLite database **and** the complete
+image directory together. The commands below archive the whole `/data` volume,
+including any SQLite journal files. Stop the application during backup and
+restore so the copy is consistent. The one-off `docker compose run` containers
+use the application image (which includes `tar`), do not publish ports and are
+removed afterwards.
+
+Backup from the checkout directory (each run creates a new archive name):
+
+```sh
+mkdir -p backups
+backup="ppm-$(date +%Y%m%d-%H%M%S).tar.gz"
+docker compose stop &&
+  docker compose run --rm --no-deps -v "$PWD/backups:/backup" app \
+    tar -czf "/backup/$backup" -C /data . &&
+  docker compose start
+tar -tzf "backups/$backup"   # Should list ./postcards.db and ./images/
+```
+
+If the backup fails, the app stays stopped; fix the error before restarting.
+Copy the archive to a safe location outside this checkout. Store backups
+securely: they contain your collection and images.
+
+To restore a trusted backup, first save the current volume, then replace its
+contents completely. Extracting over existing data would mix stale images or
+database journal files with the snapshot.
+
+```sh
+backup="ppm-YYYYMMDD-HHMMSS.tar.gz"    # Archive in ./backups
+tar -tzf "backups/$backup"              # Inspect before restoring
+docker compose down &&
+  docker compose run --rm --no-deps -v "$PWD/backups:/backup" app \
+    tar -czf "/backup/before-restore-$(date +%Y%m%d-%H%M%S).tar.gz" -C /data . &&
+  docker compose run --rm --no-deps -v "$PWD/backups:/backup:ro" app \
+    sh -c 'tar -tzf "/backup/$1" >/dev/null &&
+      find /data -mindepth 1 -delete &&
+      tar -xzf "/backup/$1" -C /data' sh "$backup" &&
+  docker compose up -d --build
+```
+
+Keep the `before-restore-*` archive until you have checked the restored records
+and front/back images in the browser. Use an application version compatible
+with the backed-up schema (older versions may reject a newer database). To
+restore on another machine or a fresh checkout, copy the archive into its
+`backups/` directory and use the same commands.
+
+### Migrating from the earlier `./data` bind mount
+
+Earlier versions of `compose.yaml` stored Docker data in the checkout's `./data`
+directory. To move it into the named volume once (the copy refuses to overwrite
+a non-empty volume and leaves `./data` unchanged):
+
+```sh
+docker compose down &&
+  docker compose run --rm --no-deps -v "$PWD/data:/legacy:ro" app \
+    sh -c 'if [ -n "$(ls -A /data)" ]; then
+        echo "volume is not empty; not migrating" >&2; exit 1
+      fi && cp -a /legacy/. /data/' &&
+  docker compose up -d --build
+```
+
+If the volume already contains data, nothing is copied and the app stays
+stopped; start it again with `docker compose up -d`. Verify your postcards and
+images, then keep `./data` as a backup or remove it yourself. Direct Python deployments with custom storage paths must back up the
+database file and image directory together in the same stopped state.
+
+### Network deployment
+
+This Compose setup is for local access; it does not expose a public service.
+The application has no built-in authentication. Any separately configured
+network deployment must provide TLS and access control through a reverse proxy
+(e.g. Caddy, nginx).
 
 ## Configuration
 
@@ -185,7 +314,12 @@ put it behind a reverse proxy (e.g. Caddy, nginx) that provides TLS and access c
 | `PPM_HOST`    | `127.0.0.1`          | Interface to bind to     |
 | `PPM_PORT`    | `8000`               | Port to listen on        |
 | `PPM_DB_PATH` | `data/postcards.db`  | Path to the SQLite file  |
-| `PPM_IMAGE_DIR` | `images` next to the database file | Directory for uploaded images (created on first upload) |
+| `PPM_IMAGE_DIR` | `images` next to the database file | Directory for uploaded images (created at startup) |
+
+The Dockerfile sets `PPM_HOST=0.0.0.0`, `PPM_PORT=8000`,
+`PPM_DB_PATH=/data/postcards.db` and `PPM_IMAGE_DIR=/data/images`.
+Compose uses the host's `PPM_PORT` only for port publishing; it does not
+automatically forward host environment variables into the container.
 
 ## REST API
 

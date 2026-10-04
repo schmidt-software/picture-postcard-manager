@@ -255,12 +255,14 @@ class ConfiguredDirectoryTest(ImageApiTest):
             captured.update(db_path=db_path, image_dir=image_dir)
             return FakeServer()
 
-        env = {"PPM_DB_PATH": str(self.db_path), "PPM_IMAGE_DIR": "/srv/images"}
+        image_dir = str(self.root / "startup-images")
+        env = {"PPM_DB_PATH": str(self.db_path), "PPM_IMAGE_DIR": image_dir}
         with mock.patch.dict(os.environ, env), \
                 mock.patch.object(server, "make_server", fake_make_server), \
                 mock.patch("builtins.print"):
             server.main()
-        self.assertEqual(captured["image_dir"], "/srv/images")
+        self.assertEqual(captured["image_dir"], image_dir)
+        self.assertTrue(Path(image_dir).is_dir())
         with mock.patch.dict(os.environ, {"PPM_DB_PATH": str(self.db_path)}), \
                 mock.patch.dict(os.environ, {"PPM_IMAGE_DIR": ""}), \
                 mock.patch.object(server, "make_server", fake_make_server), \

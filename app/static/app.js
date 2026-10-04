@@ -141,6 +141,11 @@ function applyLanguage(language) {
   document.querySelectorAll("[data-i18n-alt]").forEach((el) => {
     el.alt = translate(el.dataset.i18nAlt);
   });
+  document.querySelectorAll("[data-row-action]").forEach((button) => {
+    const label = translate(button.dataset.rowAction, { id: button.dataset.postcardId });
+    button.setAttribute("aria-label", label);
+    button.title = label;
+  });
   $("#language-select").value = currentLanguage;
   const id = $("#postcard-form").elements.id.value;
   $("#form-title").textContent = id ? translate("editPostcard", { id }) : translate("newPostcard");
@@ -197,7 +202,7 @@ function showView(name) {
   document.querySelectorAll(".view").forEach((v) => (v.hidden = v.id !== `view-${name}`));
   document.querySelectorAll("nav button").forEach((b) =>
     b.classList.toggle("active", b.dataset.view === name));
-  if (name === "browse") loadList();
+  if (name === "browse") return loadList();
 }
 
 function navigate(fragment) {
@@ -219,7 +224,7 @@ function route() {
   if (fragment === "new") {
     openForm();
   } else {
-    showView(fragment === "data" ? "data" : "browse");
+    return showView(fragment === "data" ? "data" : "browse");
   }
 }
 
@@ -445,11 +450,39 @@ async function loadList() {
       const updatedCell = document.createElement("td");
       updatedCell.textContent = p.updated_at;
       tr.append(updatedCell);
+      const actionCell = document.createElement("td");
+      const actions = document.createElement("div");
+      actions.className = "row-actions";
+      for (const [key, icon, action] of [
+        ["editPostcard", "✎", () => openForm(p)],
+        ["deletePostcard", "🗑", () => deletePostcard(p.id)],
+      ]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = key === "deletePostcard" ? "row-delete" : "";
+        button.dataset.rowAction = key;
+        button.dataset.postcardId = p.id;
+        const label = translate(key, { id: p.id });
+        button.setAttribute("aria-label", label);
+        button.title = label;
+        const symbol = document.createElement("span");
+        symbol.setAttribute("aria-hidden", "true");
+        symbol.textContent = icon;
+        button.append(symbol);
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          return action();
+        });
+        actions.append(button);
+      }
+      actionCell.append(actions);
+      tr.append(actionCell);
       tr.tabIndex = 0;
       tr.setAttribute("aria-label", translate("viewPostcard", { id: p.id }));
       tr.dataset.postcardId = p.id;
       tr.addEventListener("click", () => navigate(`postcards/${p.uuid}`));
       tr.addEventListener("keydown", (event) => {
+        if (event.target !== tr) return;
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           navigate(`postcards/${p.uuid}`);
@@ -508,17 +541,25 @@ $("#postcard-form").addEventListener("submit", async (e) => {
   }
 });
 
-$("#delete").addEventListener("click", async () => {
-  const id = $("#postcard-form").elements.id.value;
-  if (!id || !await askConfirmation("confirmDelete", "delete")) return;
+let deletionPending = false;
+
+async function deletePostcard(id) {
+  if (!id || deletionPending) return;
+  deletionPending = true;
   try {
+    if (!await askConfirmation("confirmDelete", "delete")) return;
     await api(`/api/postcards/${id}`, { method: "DELETE" });
     showMessage("deleted");
-    navigate("browse");
+    await navigate("browse");
   } catch (err) {
     showApiError(err);
+  } finally {
+    deletionPending = false;
   }
-});
+}
+
+$("#delete").addEventListener("click", () =>
+  deletePostcard($("#postcard-form").elements.id.value));
 
 $("#cancel").addEventListener("click", () => {
   const id = $("#postcard-form").elements.id.value;

@@ -13,6 +13,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from app.db import Database
+from app import images
+from app.images import ImageError, ImageStore
 
 STATIC_DIR = Path(__file__).parent / "static"
 MAX_BODY_BYTES = 50 * 1024 * 1024
@@ -21,6 +23,7 @@ ITEM_PATH = re.compile(r"^/api/postcards/(\d+)$")
 
 class Handler(BaseHTTPRequestHandler):
     db: Database = None  # injected by make_server
+    images: ImageStore = None  # injected by make_server
 
     # --- helpers -----------------------------------------------------------
 
@@ -62,6 +65,52 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_image(self, name):
+        image = self.images.read(name)
+        if image is None:
+            return self._error(HTTPStatus.NOT_FOUND, images.ERROR_NOT_FOUND)
+        ctype, body = image
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+        self.send_header("Cache-Control", "private, max-age=31536000, immutable")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _upload_image(self):
+        header = self.headers.get("Content-Length")
+        if header is None:
+            self.close_connection = True
+            return self._error(HTTPStatus.LENGTH_REQUIRED, "Content-Length header is required")
+        try:
+            length = int(header)
+        except ValueError:
+            length = -1
+        if length < 0:
+            self.close_connection = True
+            return self._error(HTTPStatus.BAD_REQUEST, "Content-Length must not be negative")
+        if length > images.MAX_IMAGE_BYTES:
+            # The body is not read; the connection is closed after the response.
+            self.close_connection = True
+            return self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, images.ERROR_TOO_LARGE)
+        data = self.rfile.read(length) if length else b""
+        if len(data) != length:
+            self.close_connection = True
+            return self._error(HTTPStatus.BAD_REQUEST, "incomplete image upload")
+        ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        try:
+            path = self.images.save(data, ctype)
+        except ImageError as exc:
+            return self._error(exc.status, str(exc))
+        except OSError as exc:
+            self.log_error("image storage failed: %s", exc)
+            return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, images.ERROR_STORAGE)
+        return self._send_json(
+            HTTPStatus.CREATED, {"path": path, "content_type": ctype, "size": len(data)},
+        )
+
     # --- routing -----------------------------------------------------------
 
     def do_GET(self):
@@ -82,10 +131,14 @@ class Handler(BaseHTTPRequestHandler):
             )
         if url.path.startswith("/api/"):
             return self._error(HTTPStatus.NOT_FOUND, "unknown endpoint")
+        if url.path.startswith(images.URL_PREFIX):
+            return self._serve_image(url.path[len(images.URL_PREFIX):])
         return self._serve_static(url.path)
 
     def do_POST(self):
         url = urlparse(self.path)
+        if url.path == "/api/images":
+            return self._upload_image()
         try:
             data = self._read_json()
             if url.path == "/api/postcards":
@@ -125,9 +178,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
 
-def make_server(host, port, db_path):
+def default_image_dir(db_path):
+    return Path(db_path).parent / "images"
+
+
+def make_server(host, port, db_path, image_dir=None):
     db = Database(db_path)
-    handler = type("BoundHandler", (Handler,), {"db": db})
+    store = ImageStore(image_dir or default_image_dir(db_path))
+    handler = type("BoundHandler", (Handler,), {"db": db, "images": store})
     return ThreadingHTTPServer((host, port), handler)
 
 
@@ -135,9 +193,11 @@ def main():
     host = os.environ.get("PPM_HOST", "127.0.0.1")
     port = int(os.environ.get("PPM_PORT", "8000"))
     db_path = os.environ.get("PPM_DB_PATH", "data/postcards.db")
+    image_dir = os.environ.get("PPM_IMAGE_DIR") or default_image_dir(db_path)
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    server = make_server(host, port, db_path)
-    print(f"Picture Postcard Manager running on http://{host}:{port} (db: {db_path})")
+    server = make_server(host, port, db_path, image_dir)
+    print(f"Picture Postcard Manager running on http://{host}:{port} "
+          f"(db: {db_path}, images: {image_dir})")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

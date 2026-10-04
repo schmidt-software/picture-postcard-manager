@@ -7,6 +7,7 @@ It runs locally on a single machine or on a server for central access.
 
 - Entry form to create, edit and delete postcards
 - Browse mode with search
+- Image upload for the front and back image paths
 - SQLite database for persistence
 - Export of the whole database to JSON and import from JSON (append or replace)
 - English and German interface with a persistent language selector
@@ -26,9 +27,10 @@ Deliberately minimal — **no third-party dependencies**:
 app/
   server.py        HTTP server, REST API, static file serving
   db.py            SQLite schema and data access
+  images.py        Validation and storage of uploaded images
   static/          Web UI (index.html, app.js, languages.js, style.css)
 tests/             unittest-based API, database and localization tests
-data/              Default location of the SQLite database (git-ignored)
+data/              Default location of the SQLite database and images/ (git-ignored)
 Dockerfile         Container image for server deployment
 compose.yaml       Docker Compose setup
 ```
@@ -76,8 +78,9 @@ The form stores six canonical fields:
 | `year` | Optional | Text, allowing approximate dates and ranges |
 | `description` | Optional | Free-form description |
 
-Image paths are stored as entered; the application does not upload, validate or
-otherwise process image files. Optional values can be left empty. Existing
+Image paths can be typed manually or filled by uploading an image (see
+[Image uploads](#image-uploads)); manually entered paths are stored as entered.
+Optional values can be left empty. Existing
 `title` and `notes` values remain in the database and in exports for compatibility,
 but are not part of the current entry form.
 
@@ -88,13 +91,38 @@ Migrated records without a front image remain available in browse and search;
 they must be given a non-empty `front_image_path` before they can be edited.
 The database migration does not discard legacy data.
 
+## Image uploads
+
+Next to each image path field, **Choose front image** and **Choose back image**
+open the browser's file picker. The selected file is uploaded to the server, and on
+success only the corresponding path field is set to the stored image's URL, e.g.
+`/images/3f2a…9c.png`. The front image remains required and the back image optional.
+Manual paths can still be entered at any time; typing into a field while its upload
+is running discards that upload's result.
+
+- Supported formats: PNG, JPEG, GIF and WebP. The declared type must match the
+  file's signature; SVG and other formats are rejected.
+- Maximum size: 20 MiB (20,971,520 bytes) per image.
+- Stored files get a random generated name; the client's filename and local path
+  are never sent or used, and existing files are never overwritten.
+- If an upload fails, the error is shown next to the button and the previous path
+  is kept. Saving is disabled while an upload is running. Results of uploads that
+  finish after the form was switched, reset or cancelled are ignored.
+- Uploaded files are not deleted when a postcard is deleted or its path changed.
+
+Images are stored in `PPM_IMAGE_DIR`, which defaults to an `images` directory next
+to the database file (`data/images` locally, `/data/images` in Docker). Only files
+with generated names that are regular files (not symlinks) directly inside this
+directory and whose content matches their extension are served under `/images/`.
+
 ## Running on a server
 
 ```sh
 docker compose up -d --build
 ```
 
-The database is stored in `./data/postcards.db` on the host.
+The database is stored in `./data/postcards.db` and uploaded images in
+`./data/images/` on the host; both persist in the mounted `/data` volume.
 The application has no built-in authentication; when exposing it to a network,
 put it behind a reverse proxy (e.g. Caddy, nginx) that provides TLS and access control.
 
@@ -105,6 +133,7 @@ put it behind a reverse proxy (e.g. Caddy, nginx) that provides TLS and access c
 | `PPM_HOST`    | `127.0.0.1`          | Interface to bind to     |
 | `PPM_PORT`    | `8000`               | Port to listen on        |
 | `PPM_DB_PATH` | `data/postcards.db`  | Path to the SQLite file  |
+| `PPM_IMAGE_DIR` | `images` next to the database file | Directory for uploaded images (created on first upload) |
 
 ## REST API
 
@@ -117,6 +146,30 @@ put it behind a reverse proxy (e.g. Caddy, nginx) that provides TLS and access c
 | DELETE | `/api/postcards/<id>`        | Delete a postcard                             |
 | GET    | `/api/export`                | Export all postcards as JSON                  |
 | POST   | `/api/import?mode=append\|replace` | Import postcards from an export file    |
+| POST   | `/api/images`                | Upload an image (raw bytes, see below)        |
+| GET    | `/images/<name>`             | Get an uploaded image                         |
+
+### Image upload
+
+Send the raw image bytes as the request body with a `Content-Length` header and a
+`Content-Type` of `image/png`, `image/jpeg`, `image/gif` or `image/webp`
+(multipart form data is not used):
+
+```sh
+curl --data-binary @front.jpg -H "Content-Type: image/jpeg" http://127.0.0.1:8000/api/images
+```
+
+A successful upload returns `201 Created`:
+
+```json
+{"path": "/images/3f2a0c5e8b9d4e7fa1b2c3d4e5f60718.jpg", "content_type": "image/jpeg", "size": 48213}
+```
+
+Store `path` in `front_image_path` or `back_image_path`. Errors return JSON
+`{"error": "..."}` with status `400` (empty or malformed request), `411` (missing
+`Content-Length`), `413` (larger than 20 MiB), `415` (unsupported type or content
+that does not match it) or `500` (the server could not store the file; details are
+logged on the server only).
 
 ### JSON export format
 
@@ -146,6 +199,11 @@ and `updated_at` values.
   ]
 }
 ```
+
+Exports contain image paths only, not image files. Back up or move the image
+directory (`PPM_IMAGE_DIR`, by default `data/images`) together with the JSON export
+or database; uploaded `/images/...` paths only work on an installation that has
+the same image files.
 
 Version-1 imports remain supported. Such older records may have no front image
 path; they retain their original values and can be repaired later by supplying

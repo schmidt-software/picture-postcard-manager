@@ -6,6 +6,7 @@ COPY app ./app
 ENV PPM_HOST=0.0.0.0 \
     PPM_PORT=8000 \
     PPM_DB_PATH=/data/postcards.db \
+    PPM_IMAGE_DIR=/data/images \
     PYTHONUNBUFFERED=1
 
 VOLUME ["/data"]

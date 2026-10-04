@@ -25,6 +25,8 @@ label { display: flex; flex-direction: column; gap: 0.25rem; }
 .actions { display: flex; gap: 0.5rem; }
 .language-picker, .file-picker { display: flex; align-items: center; gap: 0.5rem; }
 .validation-error { color: #cf222e; margin: 0; }
+.upload-error { color: #cf222e; }
+button:disabled { opacity: 0.6; cursor: not-allowed; }
 dialog { border: 1px solid var(--border); border-radius: 6px; max-width: 90%; }
 dialog::backdrop { background: #0006; }
 

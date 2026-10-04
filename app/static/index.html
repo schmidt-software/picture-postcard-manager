@@ -50,13 +50,23 @@
           <input name="front_image_path" required aria-describedby="front-image-error">
         </label>
         <p id="front-image-error" class="validation-error" role="alert" hidden></p>
+        <div class="file-picker">
+          <input type="file" id="front-image-file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+          <button type="button" id="choose-front-image" data-i18n="chooseFrontImage" aria-describedby="front-image-status">Choose front image</button>
+          <span id="front-image-status" aria-live="polite"></span>
+        </div>
         <label><span data-i18n="backImagePath">Back image path</span><input name="back_image_path"></label>
+        <div class="file-picker">
+          <input type="file" id="back-image-file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+          <button type="button" id="choose-back-image" data-i18n="chooseBackImage" aria-describedby="back-image-status">Choose back image</button>
+          <span id="back-image-status" aria-live="polite"></span>
+        </div>
         <label><span data-i18n="place">Place</span><input name="place"></label>
         <label><span data-i18n="region">Region</span><input name="region"></label>
         <label><span data-i18n="year">Year</span><input name="year"></label>
         <label><span data-i18n="description">Description</span><textarea name="description" rows="5"></textarea></label>
         <div class="actions">
-          <button type="submit" data-i18n="save">Save</button>
+          <button type="submit" id="save" data-i18n="save">Save</button>
           <button type="button" id="cancel" data-i18n="cancel">Cancel</button>
           <button type="button" id="delete" class="danger" hidden data-i18n="delete">Delete</button>
         </div>

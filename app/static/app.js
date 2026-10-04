@@ -261,9 +261,9 @@ function imagePreview(imagePath, side) {
   image.loading = "lazy";
   image.width = 96;
   image.height = 72;
-  image.hidden = true;
   image.addEventListener("load", () => {
     image.hidden = false;
+    image.style.visibility = "visible";
     fallback.hidden = true;
   });
   image.addEventListener("error", () => {

@@ -20,9 +20,10 @@ async function runTests() {
   assert.equal(image.loading, "lazy");
   assert.equal(image.width, 96);
   assert.equal(image.height, 72);
-  assert.equal(image.hidden, true);
+  assert.equal(image.hidden, false);
   await image.emit("load");
   assert.equal(image.hidden, false);
+  assert.equal(image.style.visibility, "visible");
   assert.equal(fallback.hidden, true);
   await image.emit("error");
   assert.equal(image.hidden, true);

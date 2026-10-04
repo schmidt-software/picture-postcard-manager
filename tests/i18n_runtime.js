@@ -10,6 +10,7 @@ class Element {
   constructor() {
     this.dataset = {};
     this.attributes = {};
+    this.style = {};
     this.listeners = {};
     this.children = [];
     this.textContent = "";

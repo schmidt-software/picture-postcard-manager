@@ -35,7 +35,7 @@ th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--borde
 th { white-space: nowrap; }
 .table-wrap { overflow-x: auto; }
 .postcard-value { white-space: pre-wrap; overflow-wrap: anywhere; }
-.postcard-thumbnail { object-fit: contain; border-radius: 4px; }
+.postcard-thumbnail { object-fit: contain; border-radius: 4px; visibility: hidden; }
 .image-fallback { display: inline-block; max-width: 96px; color: #59636e; font-size: 0.85rem; }
 [hidden] { display: none !important; }
 tbody tr { cursor: pointer; }

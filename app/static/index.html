@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Picture Postcard Manager</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>Picture Postcard Manager</h1>
+    <nav>
+      <button data-view="browse" class="active">Browse</button>
+      <button data-view="edit" id="nav-new">New postcard</button>
+      <button data-view="data">Import / Export</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="view-browse" class="view">
+      <input type="search" id="search" placeholder="Search…">
+      <table>
+        <thead><tr><th>ID</th><th>Title</th><th>Notes</th><th>Updated</th></tr></thead>
+        <tbody id="postcard-list"></tbody>
+      </table>
+      <p id="empty-hint" hidden>No postcards yet.</p>
+    </section>
+
+    <section id="view-edit" class="view" hidden>
+      <h2 id="form-title">New postcard</h2>
+      <form id="postcard-form">
+        <input type="hidden" name="id">
+        <label>Title <input name="title" required></label>
+        <label>Notes <textarea name="notes" rows="5"></textarea></label>
+        <div class="actions">
+          <button type="submit">Save</button>
+          <button type="button" id="cancel">Cancel</button>
+          <button type="button" id="delete" class="danger" hidden>Delete</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="view-data" class="view" hidden>
+      <h2>Export</h2>
+      <p><a href="/api/export" download>Download database as JSON</a></p>
+      <h2>Import</h2>
+      <form id="import-form">
+        <input type="file" name="file" accept="application/json,.json" required>
+        <label><input type="radio" name="mode" value="append" checked> Append to existing postcards</label>
+        <label><input type="radio" name="mode" value="replace"> Replace all existing postcards</label>
+        <button type="submit">Import</button>
+      </form>
+    </section>
+  </main>
+
+  <div id="message" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+
+# Local database files
+data/*
+!data/.gitkeep
+*.db
+*.db-journal

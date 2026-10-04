@@ -27,11 +27,11 @@ class Element {
   addEventListener(name, callback, options = {}) {
     (this.listeners[name] ??= []).push({ callback, once: options.once });
   }
-  async emit(name) {
+  async emit(name, event = {}) {
     const listeners = [...(this.listeners[name] || [])];
     this.listeners[name] = listeners.filter((listener) => !listener.once);
     await Promise.all(listeners.map(({ callback }) =>
-      callback({ target: this, preventDefault() {} })));
+      callback({ target: this, preventDefault() {}, ...event })));
   }
 }
 
@@ -140,8 +140,8 @@ async function runTests() {
   run('applyLanguage("de")');
   for (const el of ui.all) {
     if (el.dataset.i18n) assert.equal(el.textContent, context.window.UI_TRANSLATIONS.de[el.dataset.i18n]);
-    if (el.dataset.i18nPlaceholder) assert.equal(el.placeholder, "Suchen…");
-    if (el.dataset.i18nAriaLabel) assert.equal(el.attributes["aria-label"], "Suchen…");
+    if (el.dataset.i18nPlaceholder) assert.equal(el.placeholder, context.window.UI_TRANSLATIONS.de[el.dataset.i18nPlaceholder]);
+    if (el.dataset.i18nAriaLabel) assert.equal(el.attributes["aria-label"], context.window.UI_TRANSLATIONS.de[el.dataset.i18nAriaLabel]);
   }
   assert.equal(get("language-select").children.length, 2);
   assert.equal(get("file-name").textContent, "Keine Datei ausgewählt.");
@@ -298,7 +298,11 @@ async function runTests() {
   console.log("Localization runtime checks passed.");
 }
 
-runTests().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+module.exports = { setup };
+
+if (require.main === module) {
+  runTests().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}

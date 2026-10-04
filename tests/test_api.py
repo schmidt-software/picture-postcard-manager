@@ -82,7 +82,7 @@ class ApiTest(unittest.TestCase):
         self.request("POST", "/api/postcards", {"front_image_path": "/b.jpg"})
         _, export = self.request("GET", "/api/export")
         self.assertEqual(export["format"], "picture-postcard-manager")
-        self.assertEqual(export["schema_version"], 2)
+        self.assertEqual(export["schema_version"], 3)
         self.assertEqual(len(export["postcards"]), 2)
 
         status, result = self.request("POST", "/api/import?mode=append", export)

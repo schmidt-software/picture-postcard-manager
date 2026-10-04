@@ -84,7 +84,8 @@ Optional values can be left empty. Existing
 `title` and `notes` values remain in the database and in exports for compatibility,
 but are not part of the current entry form.
 
-When opening a database from the earlier schema, startup adds the six fields with
+When opening a database from an earlier schema, startup adds the six fields (schema 1)
+and the `tags` column (schema 2) as needed, in one transaction, with
 empty-string defaults in a transaction and advances the SQLite `user_version`.
 Existing IDs, timestamps, titles, notes, indexes and unrelated data are preserved.
 Migrated records without a front image remain available in browse and search;
@@ -114,6 +115,24 @@ Images are stored in `PPM_IMAGE_DIR`, which defaults to an `images` directory ne
 to the database file (`data/images` locally, `/data/images` in Docker). Only files
 with generated names that are regular files (not symlinks) directly inside this
 directory and whose content matches their extension are served under `/images/`.
+
+## Tags
+
+Each postcard has any number of optional, free-form tags (none by default).
+In the entry form, type a tag and press Enter or "Add tag"; each tag appears as a
+chip with a remove button. Because tags are added one at a time, they may contain
+commas, spaces and any Unicode text. Browse shows the tags and the search box also
+matches tag text.
+
+API rules: `tags` is an array of strings. Leading and trailing whitespace is
+trimmed; blank tags and non-string values are rejected with HTTP 400. Exact
+duplicates after trimming are dropped (comparison is case-sensitive, so `Berlin`
+and `berlin` are different tags). Order is preserved and there is no limit on the
+number of tags. On `PUT`, omitting `tags` keeps the existing tags and `"tags": []`
+clears them. Search uses SQLite's `LIKE` on each decoded tag (via `json_each`),
+not on the stored JSON text.
+
+Tags are stored in the `tags` column as a JSON array string (default `[]`).
 
 ## Running on a server
 
@@ -173,14 +192,14 @@ logged on the server only).
 
 ### JSON export format
 
-The current export uses schema version 2. Each record includes the six canonical
-fields plus `title` and `notes` for compatibility, and the `id`, `created_at`
+The current export uses schema version 3. Each record includes the six canonical
+fields, `tags` (array of strings), plus `title` and `notes` for compatibility, and the `id`, `created_at`
 and `updated_at` values.
 
 ```json
 {
   "format": "picture-postcard-manager",
-  "schema_version": 2,
+  "schema_version": 3,
   "exported_at": "2026-01-01T12:00:00+00:00",
   "postcards": [
     {
@@ -193,6 +212,7 @@ and `updated_at` values.
       "region": "Example region",
       "year": "1905",
       "description": "Postcard description",
+      "tags": ["Berlin, Mitte", "street view"],
       "created_at": "2026-01-01T12:00:00+00:00",
       "updated_at": "2026-01-01T12:00:00+00:00"
     }
@@ -204,6 +224,10 @@ Exports contain image paths only, not image files. Back up or move the image
 directory (`PPM_IMAGE_DIR`, by default `data/images`) together with the JSON export
 or database; uploaded `/images/...` paths only work on an installation that has
 the same image files.
+
+Version-1 and version-2 imports remain supported; records without `tags` import
+with an empty tag list. Version-3 exports round-trip tags exactly. An invalid `tags`
+value fails the whole import (nothing is imported).
 
 Version-1 imports remain supported. Such older records may have no front image
 path; they retain their original values and can be repaired later by supplying

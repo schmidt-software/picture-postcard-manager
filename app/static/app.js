@@ -26,6 +26,8 @@ const apiErrorKeys = {
   "region must be a string or null": "errorRegionType",
   "year must be a string or null": "errorYearType",
   "description must be a string or null": "errorDescriptionType",
+  "tags must be an array of strings": "errorTagsType",
+  "tags must not be blank": "errorTagBlank",
   "unsupported import format": "errorUnsupportedImportFormat",
   "id must be a positive SQLite integer (at most 9223372036854775807)": "errorInvalidId",
   "image upload must not be empty": "errorImageEmpty",
@@ -133,6 +135,7 @@ function applyLanguage(language) {
   renderFileName();
   renderValidation();
   renderImageStatus();
+  renderTagEditor();
   renderMessage();
   renderConfirmation();
   try {
@@ -183,6 +186,49 @@ function showView(name) {
   if (name === "browse") loadList();
 }
 
+// --- Tags -------------------------------------------------------------------
+
+let currentTags = [];
+
+function renderTagEditor() {
+  $("#tag-list").replaceChildren(...currentTags.map((tag) => {
+    const li = document.createElement("li");
+    li.className = "tag";
+    const text = document.createElement("span");
+    text.textContent = tag;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.setAttribute("aria-label", translate("removeTag", { tag }));
+    remove.addEventListener("click", () => {
+      currentTags = currentTags.filter((t) => t !== tag);
+      renderTagEditor();
+      $("#tag-input").focus();
+    });
+    li.append(text, remove);
+    return li;
+  }));
+}
+
+// Adds the pending input as a tag (trimmed, exact duplicates ignored).
+function commitTagInput() {
+  const input = $("#tag-input");
+  const tag = input.value.trim();
+  if (tag && !currentTags.includes(tag)) currentTags = [...currentTags, tag];
+  input.value = "";
+  renderTagEditor();
+}
+
+$("#add-tag").addEventListener("click", () => {
+  commitTagInput();
+  $("#tag-input").focus();
+});
+$("#tag-input").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  commitTagInput();
+});
+
 // --- Browse -----------------------------------------------------------------
 
 async function loadList() {
@@ -203,6 +249,17 @@ async function loadList() {
         td.textContent = p[field] ?? "";
         tr.append(td);
       }
+      const tagsCell = document.createElement("td");
+      const tagList = document.createElement("ul");
+      tagList.className = "tag-list postcard-tags";
+      tagList.append(...(p.tags ?? []).map((tag) => {
+        const li = document.createElement("li");
+        li.className = "tag";
+        li.textContent = tag;
+        return li;
+      }));
+      tagsCell.append(tagList);
+      tr.append(tagsCell);
       const updatedCell = document.createElement("td");
       updatedCell.textContent = p.updated_at;
       tr.append(updatedCell);
@@ -224,8 +281,11 @@ function openForm(postcard = null) {
   setValidation("front-image-error", form.elements.front_image_path, "requiredFrontImage", false);
   form.elements.id.value = postcard?.id ?? "";
   for (const [key, value] of Object.entries(postcard || {})) {
-    if (form.elements[key]) form.elements[key].value = value;
+    if (key !== "tags" && form.elements[key]) form.elements[key].value = value;
   }
+  currentTags = [...(postcard?.tags ?? [])];
+  $("#tag-input").value = "";
+  renderTagEditor();
   $("#form-title").textContent = postcard
     ? translate("editPostcard", { id: postcard.id }) : translate("newPostcard");
   $("#delete").hidden = !postcard;
@@ -242,7 +302,9 @@ $("#postcard-form").addEventListener("submit", async (e) => {
   if (!setValidation(
     "front-image-error", frontImagePath, "requiredFrontImage", !frontImagePath.value.trim(),
   )) return;
+  commitTagInput();
   const data = Object.fromEntries(new FormData(e.target));
+  data.tags = currentTags;
   const id = data.id;
   delete data.id;
   try {

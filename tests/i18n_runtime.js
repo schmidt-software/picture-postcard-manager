@@ -135,9 +135,7 @@ async function runTests() {
   const secondary = Object.values(postcardForm.elements).find((el) =>
     el.name !== "id" && el !== primary);
   const validationError = get(primary.attributes["aria-describedby"]);
-  const requiredMessage = () => run("translate(" +
-    JSON.stringify(Object.keys(context.window.UI_TRANSLATIONS.en)
-      .find((key) => key.startsWith("required") && key !== "requiredFile")) + ")");
+  const requiredMessage = () => run('translate("requiredFrontImage")');
   await new Promise(setImmediate);
   run('applyLanguage("de")');
   for (const el of ui.all) {
@@ -201,9 +199,19 @@ async function runTests() {
     assert.equal(run("formatApiError(rawError)"), context.window.UI_TRANSLATIONS.de[key]);
   }
   run('showApiError(new Error("invalid JSON: Expecting value at line 1"))');
-  assert.equal(get("message").textContent, "Fehler: Die Datei enthält kein gültiges JSON.");
+  assert.equal(get("message").textContent,
+    "Fehler: Die Datei enthält kein gültiges JSON: Expecting value at line 1");
   run('applyLanguage("en")');
-  assert.equal(get("message").textContent, "Error: The file does not contain valid JSON.");
+  assert.equal(get("message").textContent,
+    "Error: The file does not contain valid JSON: Expecting value at line 1");
+  run('applyLanguage("de")');
+  assert.equal(run('formatApiError("unknown import fields: extra, legacy")'),
+    "Der Import enthält unbekannte Felder: extra, legacy.");
+  assert.equal(run('formatApiError("unsupported import schema_version: 99")'),
+    "Die Import-Schemaversion 99 wird nicht unterstützt.");
+  assert.equal(run('formatApiError("postcard 2: front_image_path is required and must be a non-empty string")'),
+    "Postkarte 2 konnte nicht importiert werden: Der Bildpfad der Vorderseite ist erforderlich und darf nicht leer sein.");
+  run('applyLanguage("en")');
   for (const message of ["Failed to fetch", "NetworkError", "Internal Server Error", "Unexpected token"]) {
     context.fetch = async () => { throw new Error(message); };
     await run("loadList()");

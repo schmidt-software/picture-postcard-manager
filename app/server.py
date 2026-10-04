@@ -39,12 +39,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def _read_json(self):
         length = int(self.headers.get("Content-Length") or 0)
+        if length < 0:
+            raise ValueError("Content-Length must not be negative")
         if length > MAX_BODY_BYTES:
             raise ValueError("request body too large")
         raw = self.rfile.read(length) if length else b""
         try:
             return json.loads(raw or b"{}")
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise ValueError(f"invalid JSON: {exc}") from exc
 
     def _serve_static(self, path):
@@ -106,9 +108,9 @@ class Handler(BaseHTTPRequestHandler):
             data = self._read_json()
             if not isinstance(data, dict):
                 raise ValueError("postcard must be an object")
+            item = self.db.update(int(m.group(1)), data)
         except ValueError as exc:
             return self._error(HTTPStatus.BAD_REQUEST, str(exc))
-        item = self.db.update(int(m.group(1)), data)
         if item is None:
             return self._error(HTTPStatus.NOT_FOUND, "postcard not found")
         return self._send_json(HTTPStatus.OK, item)

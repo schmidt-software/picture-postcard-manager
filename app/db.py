@@ -4,17 +4,25 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
-# Fields that can be set by clients. Extend this list (and the schema) when
-# new input fields are introduced.
-EDITABLE_FIELDS = ("title", "notes")
+POSTCARD_FIELDS = (
+    "front_image_path", "back_image_path", "place", "region", "year", "description",
+)
+EDITABLE_FIELDS = ("title", "notes", *POSTCARD_FIELDS)
+RECORD_FIELDS = (*EDITABLE_FIELDS, "id", "created_at", "updated_at")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS postcards (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     title       TEXT NOT NULL DEFAULT '',
     notes       TEXT NOT NULL DEFAULT '',
+    front_image_path TEXT NOT NULL DEFAULT '',
+    back_image_path TEXT NOT NULL DEFAULT '',
+    place       TEXT NOT NULL DEFAULT '',
+    region      TEXT NOT NULL DEFAULT '',
+    year        TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -30,23 +38,63 @@ class Database:
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
-        with self._lock, self._conn:
-            self._conn.executescript(SCHEMA)
-            self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        try:
+            with self._lock, self._conn:
+                version = self._conn.execute("PRAGMA user_version").fetchone()[0]
+                if version > SCHEMA_VERSION:
+                    raise ValueError(f"unsupported database schema version: {version}")
+                self._conn.execute("BEGIN")
+                self._conn.execute(SCHEMA)
+                columns = {
+                    row["name"] for row in self._conn.execute("PRAGMA table_info(postcards)")
+                }
+                for field in POSTCARD_FIELDS:
+                    if field not in columns:
+                        self._conn.execute(
+                            f"ALTER TABLE postcards ADD COLUMN {field} TEXT NOT NULL DEFAULT ''"
+                        )
+                self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        except (sqlite3.Error, ValueError):
+            self._conn.close()
+            raise
 
     def close(self):
         self._conn.close()
 
     @staticmethod
     def _clean(data):
-        return {k: str(data[k]) for k in EDITABLE_FIELDS if k in data and data[k] is not None}
+        if not isinstance(data, dict):
+            raise ValueError("postcard must be an object")
+        unknown = set(data) - set(RECORD_FIELDS)
+        if unknown:
+            raise ValueError(f"unknown postcard fields: {', '.join(sorted(unknown))}")
+        fields = {}
+        for key in EDITABLE_FIELDS:
+            if key not in data:
+                continue
+            value = data[key]
+            if key == "front_image_path":
+                Database._validate_front(value)
+            elif value is None:
+                value = ""
+            elif key == "year" and type(value) is int:
+                value = str(value)
+            elif not isinstance(value, str):
+                raise ValueError(f"{key} must be a string or null")
+            fields[key] = value
+        return fields
+
+    @staticmethod
+    def _validate_front(value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("front_image_path is required and must be a non-empty string")
 
     def list(self, query=None):
         sql = "SELECT * FROM postcards"
         params = ()
         if query:
-            sql += " WHERE title LIKE ? OR notes LIKE ?"
-            params = (f"%{query}%",) * 2
+            sql += " WHERE " + " OR ".join(f"{field} LIKE ?" for field in EDITABLE_FIELDS)
+            params = (f"%{query}%",) * len(EDITABLE_FIELDS)
         sql += " ORDER BY id DESC"
         with self._lock:
             return [dict(r) for r in self._conn.execute(sql, params)]
@@ -58,12 +106,23 @@ class Database:
             ).fetchone()
         return dict(row) if row else None
 
-    def _insert(self, data, keep_id=False):
+    def _insert(self, data, keep_id=False, allow_legacy=False):
         fields = self._clean(data)
+        if not allow_legacy or "front_image_path" in data:
+            self._validate_front(fields.get("front_image_path"))
+        for key in ("created_at", "updated_at"):
+            if key in data and (
+                not isinstance(data[key], str) or not data[key].strip()
+            ):
+                raise ValueError(f"{key} must be a non-empty string")
         fields["created_at"] = data.get("created_at") or _now()
         fields["updated_at"] = data.get("updated_at") or fields["created_at"]
-        if keep_id and data.get("id") is not None:
-            fields["id"] = int(data["id"])
+        if "id" in data and (
+            type(data["id"]) is not int or not 0 < data["id"] <= 2**63 - 1
+        ):
+            raise ValueError("id must be a positive SQLite integer (at most 9223372036854775807)")
+        if keep_id and "id" in data:
+            fields["id"] = data["id"]
         cols = ", ".join(fields)
         marks = ", ".join("?" for _ in fields)
         cur = self._conn.execute(
@@ -78,14 +137,20 @@ class Database:
 
     def update(self, postcard_id, data):
         fields = self._clean(data)
-        fields["updated_at"] = _now()
-        assignments = ", ".join(f"{k} = ?" for k in fields)
         with self._lock, self._conn:
-            cur = self._conn.execute(
+            existing = self._conn.execute(
+                "SELECT * FROM postcards WHERE id = ?", (postcard_id,)
+            ).fetchone()
+            if existing is None:
+                return None
+            self._validate_front(fields.get("front_image_path", existing["front_image_path"]))
+            fields["updated_at"] = _now()
+            assignments = ", ".join(f"{k} = ?" for k in fields)
+            self._conn.execute(
                 f"UPDATE postcards SET {assignments} WHERE id = ?",
                 (*fields.values(), postcard_id),
             )
-        return self.get(postcard_id) if cur.rowcount else None
+        return self.get(postcard_id)
 
     def delete(self, postcard_id):
         with self._lock, self._conn:
@@ -106,17 +171,40 @@ class Database:
         mode "append" adds all entries with new ids,
         mode "replace" deletes all existing entries and keeps the original ids.
         The import runs in a single transaction.
+        Version-1 exports may contain legacy entries without image paths.
+        Such entries must receive a front image path before they can be edited.
+        Version-2 exports retain those empty paths with record IDs and timestamps.
+        Unknown fields are rejected rather than discarded.
         """
         if mode not in ("append", "replace"):
             raise ValueError("mode must be 'append' or 'replace'")
         if not isinstance(payload, dict) or not isinstance(payload.get("postcards"), list):
             raise ValueError("payload must be an object with a 'postcards' list")
+        unknown = set(payload) - {"format", "schema_version", "exported_at", "postcards"}
+        if unknown:
+            raise ValueError(f"unknown import fields: {', '.join(sorted(unknown))}")
+        if "format" in payload and payload["format"] != "picture-postcard-manager":
+            raise ValueError("unsupported import format")
+        version = payload.get("schema_version", SCHEMA_VERSION)
+        if type(version) is not int or version not in (1, SCHEMA_VERSION):
+            raise ValueError(f"unsupported import schema_version: {version}")
         entries = payload["postcards"]
         if not all(isinstance(e, dict) for e in entries):
             raise ValueError("every postcard must be an object")
         with self._lock, self._conn:
             if mode == "replace":
                 self._conn.execute("DELETE FROM postcards")
-            for entry in entries:
-                self._insert(entry, keep_id=(mode == "replace"))
+            for index, entry in enumerate(entries, start=1):
+                # Migrated records retain their empty path on export and reimport.
+                legacy = version == 1 or (
+                    entry.get("front_image_path") == ""
+                    and all(key in entry for key in ("id", "created_at", "updated_at"))
+                )
+                if legacy and entry.get("front_image_path") == "":
+                    entry = {key: value for key, value in entry.items()
+                             if key != "front_image_path"}
+                try:
+                    self._insert(entry, keep_id=(mode == "replace"), allow_legacy=legacy)
+                except (ValueError, sqlite3.IntegrityError) as exc:
+                    raise ValueError(f"postcard {index}: {exc}") from exc
         return len(entries)

@@ -29,7 +29,10 @@ dialog { border: 1px solid var(--border); border-radius: 6px; max-width: 90%; }
 dialog::backdrop { background: #0006; }
 
 table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--border); }
+th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { white-space: nowrap; }
+.table-wrap { overflow-x: auto; }
+.postcard-value { white-space: pre-wrap; overflow-wrap: anywhere; }
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: #f6f8fa; }
 

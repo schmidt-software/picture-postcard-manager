@@ -154,7 +154,8 @@ description and tags; empty optional fields are omitted. Images use the same
 same-origin restrictions and unavailable-image fallbacks as the overview.
 Choose **Edit** to change the postcard, or **Back to overview** to return.
 
-Each postcard has a direct link such as `http://127.0.0.1:8000/#postcards/42`.
+Each postcard has a direct link such as
+`http://127.0.0.1:8000/#postcards/b962a358-8899-4000-8999-6973bac5d599`.
 Opening or reloading it fetches that postcard from the API. Browser Back/Forward
 and manually changing the URL fragment work without server-side page routing.
 **Copy link** copies the URL to the clipboard; if clipboard access is unavailable
@@ -166,6 +167,28 @@ required by its reverse proxy. A localhost link is only useful on the computer
 running the app; for other recipients use the installation's reachable hostname.
 Missing/deleted postcards and invalid links display a clear message instead of
 an edit form or stale information.
+
+### UUID share identifiers
+
+Each postcard receives a random UUIDv4 from the server. Existing databases are
+migrated transactionally, assigning UUIDs without changing metadata, tags, image
+paths, numeric IDs or timestamps. UUIDs remain unchanged across edits and restarts
+and cannot be assigned or modified through create/update requests.
+
+Detail pages and share links accept only canonical lowercase UUIDv4 identifiers;
+the former numeric-ID detail links are no longer supported. UUID lookup uses
+`GET /api/postcards/by-uuid/<uuid>`. Numeric API IDs remain available for internal
+management and editing.
+
+UUIDs make share URLs difficult to guess, but are **not access control**. The
+management API still supports listing postcards and numeric-ID operations.
+Use the existing reverse-proxy authentication to restrict access to the collection.
+
+Schema-version-4 exports include `uuid` in every record. A **replace** import
+preserves UUIDs and therefore existing share links; an **append** import assigns
+fresh UUIDs and numeric IDs to every copy. Explicit version-4 records must include
+valid UUIDs, and duplicate UUIDs in a replace import are rejected transactionally.
+Versions 1–3 remain importable and receive new UUIDs when none are present.
 
 ## Running locally with Docker Compose
 
@@ -359,18 +382,19 @@ logged on the server only).
 
 ### JSON export format
 
-The current export uses schema version 3. Each record includes the six canonical
+The current export uses schema version 4. Each record includes the six canonical
 fields, `tags` (array of strings), plus `title` and `notes` for compatibility, and the `id`, `created_at`
 and `updated_at` values.
 
 ```json
 {
   "format": "picture-postcard-manager",
-  "schema_version": 3,
+  "schema_version": 4,
   "exported_at": "2026-01-01T12:00:00+00:00",
   "postcards": [
     {
       "id": 1,
+      "uuid": "b962a358-8899-4000-8999-6973bac5d599",
       "title": "",
       "notes": "",
       "front_image_path": "images/front.jpg",
@@ -392,8 +416,8 @@ directory (`PPM_IMAGE_DIR`, by default `data/images`) together with the JSON exp
 or database; uploaded `/images/...` paths only work on an installation that has
 the same image files.
 
-Version-1 and version-2 imports remain supported; records without `tags` import
-with an empty tag list. Version-3 exports round-trip tags exactly. An invalid `tags`
+Version-1, version-2 and version-3 imports remain supported; records without `tags` import
+with an empty tag list. Version-4 exports round-trip tags exactly. An invalid `tags`
 value fails the whole import (nothing is imported).
 
 Version-1 imports remain supported. Such older records may have no front image

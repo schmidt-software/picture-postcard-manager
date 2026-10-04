@@ -75,7 +75,7 @@ class TagsDatabaseTest(unittest.TestCase):
     def test_roundtrip_and_old_import_versions(self):
         item = self.create(tags=["x, y", "ü"])
         export = self.db.export_data()
-        self.assertEqual(export["schema_version"], 3)
+        self.assertEqual(export["schema_version"], 4)
         self.assertEqual(export["postcards"][0]["tags"], ["x, y", "ü"])
         self.db.import_data(export, "replace")
         self.assertEqual(self.db.get(item["id"]), item)

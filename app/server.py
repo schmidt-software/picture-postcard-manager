@@ -118,6 +118,15 @@ class Handler(BaseHTTPRequestHandler):
         params = parse_qs(url.query)
         if url.path == "/api/postcards":
             return self._send_json(HTTPStatus.OK, self.db.list(params.get("q", [None])[0]))
+        if url.path.startswith("/api/postcards/by-uuid/"):
+            value = url.path[len("/api/postcards/by-uuid/"):]
+            try:
+                item = self.db.get_by_uuid(value)
+            except ValueError as exc:
+                return self._error(HTTPStatus.BAD_REQUEST, str(exc))
+            if item is None:
+                return self._error(HTTPStatus.NOT_FOUND, "postcard not found")
+            return self._send_json(HTTPStatus.OK, item)
         if m := ITEM_PATH.match(url.path):
             item = self.db.get(int(m.group(1)))
             if item is None:

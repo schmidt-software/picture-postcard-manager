@@ -82,16 +82,16 @@ class ApiTest(unittest.TestCase):
         self.request("POST", "/api/postcards", {"front_image_path": "/b.jpg"})
         _, export = self.request("GET", "/api/export")
         self.assertEqual(export["format"], "picture-postcard-manager")
-        self.assertEqual(export["schema_version"], 3)
+        self.assertEqual(export["schema_version"], 4)
         self.assertEqual(len(export["postcards"]), 2)
 
         status, result = self.request("POST", "/api/import?mode=append", export)
         self.assertEqual((status, result["imported"]), (200, 2))
         _, items = self.request("GET", "/api/postcards")
         self.assertEqual(len(items), 4)
-        originals = [{k: v for k, v in item.items() if k != "id"}
+        originals = [{k: v for k, v in item.items() if k not in ("id", "uuid")}
                      for item in export["postcards"]]
-        copies = [{k: v for k, v in item.items() if k != "id"} for item in items]
+        copies = [{k: v for k, v in item.items() if k not in ("id", "uuid")} for item in items]
         for original in originals:
             self.assertEqual(copies.count(original), 2)
 

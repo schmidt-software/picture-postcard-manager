@@ -293,11 +293,13 @@ async function runTests() {
   assert.equal(actions.find((action) => action.options.method === "POST").options.body, '{"postcards":[]}');
 
   const content = {
-    id: 42, [primary.name]: "Save <script>", [secondary.name]: "Löschen / Delete",
+    id: 42, uuid: "b962a358-8899-4000-8999-6973bac5d599",
+    [primary.name]: "Save <script>", [secondary.name]: "Löschen / Delete",
     updated_at: "2026-10-04",
   };
   context.fetch = async (url) => ({
-    ok: true, status: 200, json: async () => url === "/api/postcards/42" ? content : [content],
+    ok: true, status: 200,
+    json: async () => url === `/api/postcards/by-uuid/${content.uuid}` ? content : [content],
   });
   await run("loadList()");
   const cells = get("postcard-list").children[0].children.map((el) => el.textContent);

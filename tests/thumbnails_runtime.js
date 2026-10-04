@@ -43,13 +43,15 @@ async function runTests() {
   run('applyLanguage("en")');
 
   context.postcard = {
-    id: 8, front_image_path: "/images/front.png", back_image_path: "",
+    id: 8, uuid: "b962a358-8899-4000-8999-6973bac5d599",
+    front_image_path: "/images/front.png", back_image_path: "",
     place: "Place <script>", region: "Preserved region", year: "1910",
     description: "Preserved description", updated_at: "2026-10-04",
   };
   context.fetch = async (url) => ({
     ok: true, status: 200,
-    json: async () => url === "/api/postcards/8" ? context.postcard : [context.postcard],
+    json: async () => url === `/api/postcards/by-uuid/${context.postcard.uuid}`
+      ? context.postcard : [context.postcard],
   });
   await run("loadList()");
   const row = get("postcard-list").children[0];

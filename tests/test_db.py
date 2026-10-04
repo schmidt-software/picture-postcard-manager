@@ -50,6 +50,7 @@ class DatabaseTest(unittest.TestCase):
                 )
                 for field in POSTCARD_FIELDS:
                     self.assertEqual(legacy[field], "")
+                self.assertEqual(legacy["tags"], [])
                 with closing(sqlite3.connect(path)) as conn, conn:
                     self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
                     self.assertEqual(conn.execute("SELECT value FROM unrelated").fetchone()[0], "keep me")

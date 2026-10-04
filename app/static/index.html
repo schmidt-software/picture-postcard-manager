@@ -34,6 +34,7 @@
             <th data-i18n="region">Region</th>
             <th data-i18n="year">Year</th>
             <th data-i18n="description">Description</th>
+            <th data-i18n="tags">Tags</th>
             <th data-i18n="updated">Updated</th>
           </tr></thead>
           <tbody id="postcard-list"></tbody>
@@ -65,6 +66,15 @@
         <label><span data-i18n="region">Region</span><input name="region"></label>
         <label><span data-i18n="year">Year</span><input name="year"></label>
         <label><span data-i18n="description">Description</span><textarea name="description" rows="5"></textarea></label>
+        <fieldset class="tags-field">
+          <legend data-i18n="tags">Tags</legend>
+          <ul id="tag-list" class="tag-list" data-i18n-aria-label="tags" aria-label="Tags"></ul>
+          <div class="tag-add">
+            <input id="tag-input" data-i18n-aria-label="newTag" aria-label="New tag"
+                   data-i18n-placeholder="newTag" placeholder="New tag" autocomplete="off">
+            <button type="button" id="add-tag" data-i18n="addTag">Add tag</button>
+          </div>
+        </fieldset>
         <div class="actions">
           <button type="submit" id="save" data-i18n="save">Save</button>
           <button type="button" id="cancel" data-i18n="cancel">Cancel</button>

@@ -1,15 +1,18 @@
 """SQLite persistence layer for postcards."""
 
+import json
 import sqlite3
 import threading
 from datetime import datetime, timezone
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+IMPORT_VERSIONS = (1, 2, 3)
 
 POSTCARD_FIELDS = (
     "front_image_path", "back_image_path", "place", "region", "year", "description",
 )
-EDITABLE_FIELDS = ("title", "notes", *POSTCARD_FIELDS)
+TEXT_FIELDS = ("title", "notes", *POSTCARD_FIELDS)
+EDITABLE_FIELDS = (*TEXT_FIELDS, "tags")
 RECORD_FIELDS = (*EDITABLE_FIELDS, "id", "created_at", "updated_at")
 
 SCHEMA = """
@@ -23,6 +26,7 @@ CREATE TABLE IF NOT EXISTS postcards (
     region      TEXT NOT NULL DEFAULT '',
     year        TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
+    tags        TEXT NOT NULL DEFAULT '[]',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -53,6 +57,10 @@ class Database:
                         self._conn.execute(
                             f"ALTER TABLE postcards ADD COLUMN {field} TEXT NOT NULL DEFAULT ''"
                         )
+                if "tags" not in columns:
+                    self._conn.execute(
+                        "ALTER TABLE postcards ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'"
+                    )
                 self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         except (sqlite3.Error, ValueError):
             self._conn.close()
@@ -73,7 +81,9 @@ class Database:
             if key not in data:
                 continue
             value = data[key]
-            if key == "front_image_path":
+            if key == "tags":
+                value = json.dumps(Database._clean_tags(value), ensure_ascii=False)
+            elif key == "front_image_path":
                 Database._validate_front(value)
             elif value is None:
                 value = ""
@@ -85,6 +95,28 @@ class Database:
         return fields
 
     @staticmethod
+    def _clean_tags(value):
+        """Trim tags and drop exact duplicates (case-sensitive), keeping first-seen order."""
+        if not isinstance(value, list):
+            raise ValueError("tags must be an array of strings")
+        tags = []
+        for tag in value:
+            if not isinstance(tag, str):
+                raise ValueError("tags must be an array of strings")
+            tag = tag.strip()
+            if not tag:
+                raise ValueError("tags must not be blank")
+            if tag not in tags:
+                tags.append(tag)
+        return tags
+
+    @staticmethod
+    def _row(row):
+        record = dict(row)
+        record["tags"] = json.loads(record["tags"])
+        return record
+
+    @staticmethod
     def _validate_front(value):
         if not isinstance(value, str) or not value.strip():
             raise ValueError("front_image_path is required and must be a non-empty string")
@@ -93,18 +125,22 @@ class Database:
         sql = "SELECT * FROM postcards"
         params = ()
         if query:
-            sql += " WHERE " + " OR ".join(f"{field} LIKE ?" for field in EDITABLE_FIELDS)
-            params = (f"%{query}%",) * len(EDITABLE_FIELDS)
+            # Tags are matched as decoded text, not as their JSON representation.
+            sql += " WHERE " + " OR ".join(
+                [f"{field} LIKE ?" for field in TEXT_FIELDS]
+                + ["EXISTS (SELECT 1 FROM json_each(postcards.tags) WHERE value LIKE ?)"]
+            )
+            params = (f"%{query}%",) * (len(TEXT_FIELDS) + 1)
         sql += " ORDER BY id DESC"
         with self._lock:
-            return [dict(r) for r in self._conn.execute(sql, params)]
+            return [self._row(r) for r in self._conn.execute(sql, params)]
 
     def get(self, postcard_id):
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM postcards WHERE id = ?", (postcard_id,)
             ).fetchone()
-        return dict(row) if row else None
+        return self._row(row) if row else None
 
     def _insert(self, data, keep_id=False, allow_legacy=False):
         fields = self._clean(data)
@@ -173,6 +209,7 @@ class Database:
         The import runs in a single transaction.
         Version-1 exports may contain legacy entries without image paths.
         Such entries must receive a front image path before they can be edited.
+        Version-2 exports (no tags) are accepted; version-3 exports add tags.
         Version-2 exports retain those empty paths with record IDs and timestamps.
         Unknown fields are rejected rather than discarded.
         """
@@ -186,7 +223,7 @@ class Database:
         if "format" in payload and payload["format"] != "picture-postcard-manager":
             raise ValueError("unsupported import format")
         version = payload.get("schema_version", SCHEMA_VERSION)
-        if type(version) is not int or version not in (1, SCHEMA_VERSION):
+        if type(version) is not int or version not in IMPORT_VERSIONS:
             raise ValueError(f"unsupported import schema_version: {version}")
         entries = payload["postcards"]
         if not all(isinstance(e, dict) for e in entries):

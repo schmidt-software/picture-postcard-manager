@@ -38,6 +38,16 @@ th { white-space: nowrap; }
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: #f6f8fa; }
 
+.tags-field { border: 1px solid var(--border); border-radius: 6px; }
+.tag-list { display: flex; flex-wrap: wrap; gap: 0.4rem; list-style: none; margin: 0 0 0.5rem; padding: 0; }
+.tag-add { display: flex; gap: 0.5rem; }
+.tag-add input { flex: 1; }
+.tag { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.1rem 0.2rem 0.1rem 0.6rem;
+       border: 1px solid var(--border); border-radius: 999px; background: #eef4fb;
+       overflow-wrap: anywhere; }
+.tag button { padding: 0 0.4rem; border: 0; border-radius: 999px; background: transparent; }
+.postcard-tags .tag { padding-right: 0.6rem; }
+
 #message { position: fixed; bottom: 1rem; right: 1rem; padding: 0.75rem 1rem; border-radius: 6px;
            background: #1a7f37; color: #fff; }
 #message.error { background: #cf222e; }

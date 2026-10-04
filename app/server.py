@@ -204,6 +204,7 @@ def main():
     db_path = os.environ.get("PPM_DB_PATH", "data/postcards.db")
     image_dir = os.environ.get("PPM_IMAGE_DIR") or default_image_dir(db_path)
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(image_dir).mkdir(parents=True, exist_ok=True)
     server = make_server(host, port, db_path, image_dir)
     print(f"Picture Postcard Manager running on http://{host}:{port} "
           f"(db: {db_path}, images: {image_dir})")

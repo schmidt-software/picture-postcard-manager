@@ -56,7 +56,7 @@ async function runTests() {
   await run("loadList()");
   const row = get("postcard-list").children[0];
   const values = row.children.map((child) => child.textContent);
-  assert.equal(row.children.length, 7);
+  assert.equal(row.children.length, 8);
   assert.equal(values[0], 8);
   assert.equal(values[3], "Place <script>");
   assert.equal(values[4], "1910");

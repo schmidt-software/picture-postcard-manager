@@ -33,7 +33,7 @@ class Element {
     const listeners = [...(this.listeners[name] || [])];
     this.listeners[name] = listeners.filter((listener) => !listener.once);
     await Promise.all(listeners.map(({ callback }) =>
-      callback({ target: this, preventDefault() {}, ...event })));
+      callback({ target: this, preventDefault() {}, stopPropagation() {}, ...event })));
   }
 }
 
@@ -304,7 +304,7 @@ async function runTests() {
   await run("loadList()");
   const cells = get("postcard-list").children[0].children.map((el) => el.textContent);
   assert.equal(cells[0], 42);
-  assert.equal(cells.at(-1), content.updated_at);
+  assert.equal(cells.at(-2), content.updated_at);
   await get("postcard-list").children[0].emit("click");
   assert.equal(get("detail-title").textContent, "Postkarte #42");
   await get("detail-edit").emit("click");

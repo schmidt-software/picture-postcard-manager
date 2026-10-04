@@ -20,11 +20,48 @@ const apiErrorKeys = {
   "mode must be 'append' or 'replace'": "errorInvalidMode",
   "payload must be an object with a 'postcards' list": "errorInvalidPayload",
   "every postcard must be an object": "errorInvalidPostcard",
+  "front_image_path is required and must be a non-empty string": "errorFrontImageRequired",
+  "back_image_path must be a string or null": "errorBackImagePathType",
+  "place must be a string or null": "errorPlaceType",
+  "region must be a string or null": "errorRegionType",
+  "year must be a string or null": "errorYearType",
+  "description must be a string or null": "errorDescriptionType",
+  "unsupported import format": "errorUnsupportedImportFormat",
+  "id must be a positive SQLite integer (at most 9223372036854775807)": "errorInvalidId",
 };
 
 function formatApiError(raw) {
   if (Object.hasOwn(apiErrorKeys, raw)) return translate(apiErrorKeys[raw]);
-  if (raw.startsWith("invalid JSON:")) return translate("errorInvalidJson");
+  if (raw.startsWith("unknown postcard fields:")) {
+    return translate("errorUnknownPostcardFields", {
+      fields: raw.slice("unknown postcard fields:".length).trim(),
+    });
+  }
+  if (raw.startsWith("unknown import fields:")) {
+    return translate("errorUnknownImportFields", {
+      fields: raw.slice("unknown import fields:".length).trim(),
+    });
+  }
+  if (raw.startsWith("unsupported import schema_version:")) {
+    return translate("errorUnsupportedImportVersion", {
+      version: raw.slice("unsupported import schema_version:".length).trim(),
+    });
+  }
+  const timestamp = raw.match(/^(created_at|updated_at) must be a non-empty string$/);
+  if (timestamp) return translate("errorInvalidTimestamp", { field: timestamp[1] });
+  const itemError = raw.match(/^postcard (\d+): (.+)$/);
+  if (itemError) {
+    const detail = itemError[2].startsWith("UNIQUE constraint failed: postcards.id")
+      ? translate("errorDuplicateId")
+      : formatApiError(itemError[2]);
+    return translate("errorImportPostcard", { index: itemError[1], detail });
+  }
+  if (raw.startsWith("UNIQUE constraint failed: postcards.id")) {
+    return translate("errorDuplicateId");
+  }
+  if (raw.startsWith("invalid JSON:")) {
+    return translate("errorInvalidJson", { detail: raw.slice("invalid JSON:".length).trim() });
+  }
   // Browser, parser and unknown server errors can be in any language.
   return translate("errorRequestFailed");
 }
@@ -51,7 +88,9 @@ function showApiError(error) {
 }
 
 function renderValidation() {
-  for (const [id, key] of [["title-error", "requiredTitle"], ["file-error", "requiredFile"]]) {
+  for (const [id, key] of [
+    ["front-image-error", "requiredFrontImage"], ["file-error", "requiredFile"],
+  ]) {
     const el = $(`#${id}`);
     if (!el.hidden) el.textContent = translate(key);
   }
@@ -145,11 +184,20 @@ async function loadList() {
     const tbody = $("#postcard-list");
     tbody.replaceChildren(...items.map((p) => {
       const tr = document.createElement("tr");
-      for (const value of [p.id, p.title, p.notes, p.updated_at]) {
+      const idCell = document.createElement("td");
+      idCell.textContent = p.id;
+      tr.append(idCell);
+      for (const field of [
+        "front_image_path", "back_image_path", "place", "region", "year", "description",
+      ]) {
         const td = document.createElement("td");
-        td.textContent = value;
+        td.className = "postcard-value";
+        td.textContent = p[field] ?? "";
         tr.append(td);
       }
+      const updatedCell = document.createElement("td");
+      updatedCell.textContent = p.updated_at;
+      tr.append(updatedCell);
       tr.addEventListener("click", () => openForm(p));
       return tr;
     }));
@@ -164,7 +212,7 @@ async function loadList() {
 function openForm(postcard = null) {
   const form = $("#postcard-form");
   form.reset();
-  setValidation("title-error", form.elements.title, "requiredTitle", false);
+  setValidation("front-image-error", form.elements.front_image_path, "requiredFrontImage", false);
   form.elements.id.value = postcard?.id ?? "";
   for (const [key, value] of Object.entries(postcard || {})) {
     if (form.elements[key]) form.elements[key].value = value;
@@ -177,8 +225,10 @@ function openForm(postcard = null) {
 
 $("#postcard-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const title = e.target.elements.title;
-  if (!setValidation("title-error", title, "requiredTitle", !title.value)) return;
+  const frontImagePath = e.target.elements.front_image_path;
+  if (!setValidation(
+    "front-image-error", frontImagePath, "requiredFrontImage", !frontImagePath.value.trim(),
+  )) return;
   const data = Object.fromEntries(new FormData(e.target));
   const id = data.id;
   delete data.id;
@@ -205,9 +255,9 @@ $("#delete").addEventListener("click", async () => {
 });
 
 $("#cancel").addEventListener("click", () => showView("browse"));
-$("#postcard-form").elements.title.addEventListener("input", (event) => {
-  if (event.target.value) {
-    setValidation("title-error", event.target, "requiredTitle", false);
+$("#postcard-form").elements.front_image_path.addEventListener("input", (event) => {
+  if (event.target.value.trim()) {
+    setValidation("front-image-error", event.target, "requiredFrontImage", false);
   }
 });
 

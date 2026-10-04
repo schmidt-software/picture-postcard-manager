@@ -24,10 +24,21 @@
     <section id="view-browse" class="view">
       <input type="search" id="search" placeholder="Search…" data-i18n-placeholder="search"
              aria-label="Search…" data-i18n-aria-label="search">
-      <table>
-        <thead><tr><th data-i18n="id">ID</th><th data-i18n="title">Title</th><th data-i18n="notes">Notes</th><th data-i18n="updated">Updated</th></tr></thead>
-        <tbody id="postcard-list"></tbody>
-      </table>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th data-i18n="id">ID</th>
+            <th data-i18n="frontImagePath">Front image path</th>
+            <th data-i18n="backImagePath">Back image path</th>
+            <th data-i18n="place">Place</th>
+            <th data-i18n="region">Region</th>
+            <th data-i18n="year">Year</th>
+            <th data-i18n="description">Description</th>
+            <th data-i18n="updated">Updated</th>
+          </tr></thead>
+          <tbody id="postcard-list"></tbody>
+        </table>
+      </div>
       <p id="empty-hint" hidden data-i18n="emptyPostcards">No postcards yet.</p>
     </section>
 
@@ -35,9 +46,15 @@
       <h2 id="form-title" data-i18n="newPostcard">New postcard</h2>
       <form id="postcard-form" novalidate>
         <input type="hidden" name="id">
-        <label><span data-i18n="title">Title</span><input name="title" required aria-describedby="title-error"></label>
-        <p id="title-error" class="validation-error" role="alert" hidden></p>
-        <label><span data-i18n="notes">Notes</span><textarea name="notes" rows="5"></textarea></label>
+        <label><span data-i18n="frontImagePath">Front image path</span>
+          <input name="front_image_path" required aria-describedby="front-image-error">
+        </label>
+        <p id="front-image-error" class="validation-error" role="alert" hidden></p>
+        <label><span data-i18n="backImagePath">Back image path</span><input name="back_image_path"></label>
+        <label><span data-i18n="place">Place</span><input name="place"></label>
+        <label><span data-i18n="region">Region</span><input name="region"></label>
+        <label><span data-i18n="year">Year</span><input name="year"></label>
+        <label><span data-i18n="description">Description</span><textarea name="description" rows="5"></textarea></label>
         <div class="actions">
           <button type="submit" data-i18n="save">Save</button>
           <button type="button" id="cancel" data-i18n="cancel">Cancel</button>

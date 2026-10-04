@@ -1,0 +1,10 @@
+**
+!app/
+!app/**
+!Dockerfile
+!.dockerignore
+**/__pycache__/
+**/*.pyc
+**/*.db
+**/*.db-*
+**/.DS_Store

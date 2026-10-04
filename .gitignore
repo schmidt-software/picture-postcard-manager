@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
+.env
+backups/
 
 # Local database files
 data/*

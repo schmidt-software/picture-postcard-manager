@@ -47,7 +47,10 @@ async function runTests() {
     place: "Place <script>", region: "Preserved region", year: "1910",
     description: "Preserved description", updated_at: "2026-10-04",
   };
-  context.fetch = async () => ({ ok: true, status: 200, json: async () => [context.postcard] });
+  context.fetch = async (url) => ({
+    ok: true, status: 200,
+    json: async () => url === "/api/postcards/8" ? context.postcard : [context.postcard],
+  });
   await run("loadList()");
   const row = get("postcard-list").children[0];
   const values = row.children.map((child) => child.textContent);
@@ -60,6 +63,8 @@ async function runTests() {
   assert.ok(!values.includes("Preserved description"));
   assert.ok(!values.includes("/images/front.png"));
   await row.emit("click");
+  assert.equal(get("detail-title").textContent, "Postcard #8");
+  await get("detail-edit").emit("click");
   assert.equal(postcardForm.elements.front_image_path.value, "/images/front.png");
   assert.equal(postcardForm.elements.region.value, "Preserved region");
   assert.equal(postcardForm.elements.description.value, "Preserved description");

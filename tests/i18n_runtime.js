@@ -23,6 +23,7 @@ class Element {
   replaceChildren(...children) { this.children = children; }
   setAttribute(name, value) { this.attributes[name] = value; }
   focus() { this.focused = true; }
+  select() { this.selected = true; }
   click() { this.clicked = true; }
   showModal() { this.open = true; }
   addEventListener(name, callback, options = {}) {
@@ -36,7 +37,7 @@ class Element {
   }
 }
 
-function setup(saved = null, blockedStorage = false) {
+function setup(saved = null, blockedStorage = false, options = {}) {
   const elements = new Map();
   const all = [];
   // Only attributes needed by the application are modeled; no DOM dependency.
@@ -74,8 +75,15 @@ function setup(saved = null, blockedStorage = false) {
   };
   const storage = new Map(saved === null ? [] : [["picture-postcard-manager-language", saved]]);
   const requests = [];
+  const location = new URL(options.url ?? "http://127.0.0.1:8000/");
+  const windowListeners = {};
   const context = vm.createContext({
-    window: { location: { href: "http://127.0.0.1:8000/" } },
+    window: {
+      location,
+      history: { pushState(state, title, url) { location.href = String(url); } },
+      addEventListener(name, callback) { windowListeners[name] = callback; },
+    },
+    navigator: {},
     URL,
     document: {
       documentElement: {},
@@ -104,8 +112,9 @@ function setup(saved = null, blockedStorage = false) {
         for (const [key, el] of Object.entries(this.form.elements)) yield [key, el.value];
       }
     },
-    fetch: async (url, options) => {
-      requests.push({ url, options });
+    fetch: async (url, requestOptions) => {
+      requests.push({ url, options: requestOptions });
+      if (options.fetch) return options.fetch(url, requestOptions);
       return { ok: true, status: 200, json: async () => [] };
     },
     setTimeout: () => 1,
@@ -115,7 +124,7 @@ function setup(saved = null, blockedStorage = false) {
     vm.runInContext(fs.readFileSync(path.join(staticDir, file), "utf8"), context);
   }
   return {
-    context, elements, all, storage, requests, postcardForm, importForm,
+    context, elements, all, storage, requests, postcardForm, importForm, windowListeners,
     run: (source) => vm.runInContext(source, context),
     get: (id) => elements.get(`#${id}`),
   };
@@ -287,12 +296,16 @@ async function runTests() {
     id: 42, [primary.name]: "Save <script>", [secondary.name]: "Löschen / Delete",
     updated_at: "2026-10-04",
   };
-  context.fetch = async () => ({ ok: true, status: 200, json: async () => [content] });
+  context.fetch = async (url) => ({
+    ok: true, status: 200, json: async () => url === "/api/postcards/42" ? content : [content],
+  });
   await run("loadList()");
   const cells = get("postcard-list").children[0].children.map((el) => el.textContent);
   assert.equal(cells[0], 42);
   assert.equal(cells.at(-1), content.updated_at);
   await get("postcard-list").children[0].emit("click");
+  assert.equal(get("detail-title").textContent, "Postkarte #42");
+  await get("detail-edit").emit("click");
   assert.equal(get("form-title").textContent, "Postkarte #42 bearbeiten");
   assert.equal(primary.value, content[primary.name]);
   console.log("Localization runtime checks passed.");

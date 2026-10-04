@@ -134,6 +134,18 @@ not on the stored JSON text.
 
 Tags are stored in the `tags` column as a JSON array string (default `[]`).
 
+## Overview images
+
+The overview shows compact front/back image previews, place, year, tags, ID and the
+last update time. Region and description remain editable and are included in
+storage and JSON exports, but are not shown as overview columns.
+
+Previews load lazily from browser-accessible URLs on the application's own
+origin. Missing or unavailable images show a localized fallback instead of a
+broken-image icon. External hosts, `file:` and active-content URLs are not loaded.
+Filesystem paths that are not served by the app cannot be previewed; their
+stored values are unchanged.
+
 ## Running on a server
 
 ```sh

@@ -74,7 +74,8 @@ function setup(saved = null, blockedStorage = false) {
   const storage = new Map(saved === null ? [] : [["picture-postcard-manager-language", saved]]);
   const requests = [];
   const context = vm.createContext({
-    window: {},
+    window: { location: { href: "http://127.0.0.1:8000/" } },
+    URL,
     document: {
       documentElement: {},
       querySelector: (selector) => elements.get(selector),
@@ -290,8 +291,6 @@ async function runTests() {
   const cells = get("postcard-list").children[0].children.map((el) => el.textContent);
   assert.equal(cells[0], 42);
   assert.equal(cells.at(-1), content.updated_at);
-  assert.ok(cells.includes(content[primary.name]));
-  assert.ok(cells.includes(content[secondary.name]));
   await get("postcard-list").children[0].emit("click");
   assert.equal(get("form-title").textContent, "Postkarte #42 bearbeiten");
   assert.equal(primary.value, content[primary.name]);
@@ -299,7 +298,6 @@ async function runTests() {
 }
 
 module.exports = { setup };
-
 if (require.main === module) {
   runTests().catch((error) => {
     console.error(error);

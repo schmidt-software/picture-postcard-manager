@@ -129,6 +129,9 @@ function applyLanguage(language) {
   document.querySelectorAll("[data-i18n-aria-label]").forEach((el) => {
     el.setAttribute("aria-label", translate(el.dataset.i18nAriaLabel));
   });
+  document.querySelectorAll("[data-i18n-alt]").forEach((el) => {
+    el.alt = translate(el.dataset.i18nAlt);
+  });
   $("#language-select").value = currentLanguage;
   const id = $("#postcard-form").elements.id.value;
   $("#form-title").textContent = id ? translate("editPostcard", { id }) : translate("newPostcard");
@@ -231,6 +234,47 @@ $("#tag-input").addEventListener("keydown", (event) => {
 
 // --- Browse -----------------------------------------------------------------
 
+function imagePreview(imagePath, side) {
+  const cell = document.createElement("td");
+  const fallback = document.createElement("span");
+  fallback.className = "image-fallback";
+  fallback.dataset.i18n = imagePath ? "imageUnavailable" : "noImage";
+  fallback.textContent = translate(fallback.dataset.i18n);
+  cell.append(fallback);
+  if (typeof imagePath !== "string" || !imagePath.trim()) return cell;
+
+  let url;
+  try {
+    url = new URL(imagePath, window.location.href);
+  } catch (error) {
+    if (error.name !== "TypeError") throw error;
+    return cell;
+  }
+  // Do not contact external hosts or allow active-content URLs from imported data.
+  if (url.origin !== new URL(window.location.href).origin
+      || !["http:", "https:"].includes(url.protocol)) return cell;
+
+  const image = document.createElement("img");
+  image.className = "postcard-thumbnail";
+  image.dataset.i18nAlt = side;
+  image.alt = translate(side);
+  image.loading = "lazy";
+  image.width = 96;
+  image.height = 72;
+  image.hidden = true;
+  image.addEventListener("load", () => {
+    image.hidden = false;
+    fallback.hidden = true;
+  });
+  image.addEventListener("error", () => {
+    image.hidden = true;
+    fallback.hidden = false;
+  });
+  cell.append(image);
+  image.src = url.href;
+  return cell;
+}
+
 async function loadList() {
   try {
     const q = $("#search").value.trim();
@@ -241,9 +285,9 @@ async function loadList() {
       const idCell = document.createElement("td");
       idCell.textContent = p.id;
       tr.append(idCell);
-      for (const field of [
-        "front_image_path", "back_image_path", "place", "region", "year", "description",
-      ]) {
+      tr.append(imagePreview(p.front_image_path, "frontImage"),
+        imagePreview(p.back_image_path, "backImage"));
+      for (const field of ["place", "year"]) {
         const td = document.createElement("td");
         td.className = "postcard-value";
         td.textContent = p[field] ?? "";

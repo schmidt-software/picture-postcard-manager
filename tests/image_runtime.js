@@ -70,7 +70,13 @@ function setup() {
   const requests = [];
   const uploads = [];
   const context = vm.createContext({
-    window: {},
+    window: {
+      location: new URL("http://127.0.0.1:8000/"),
+      history: { pushState(state, title, url) { context.window.location.href = String(url); } },
+      addEventListener() {},
+    },
+    URL,
+    navigator: {},
     document: {
       documentElement: {},
       querySelector: (selector) => elements.get(selector),

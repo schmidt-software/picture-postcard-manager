@@ -81,10 +81,26 @@ function setup(saved = null, blockedStorage = false, options = {}) {
   const context = vm.createContext({
     window: {
       location,
+      // A session history stack; go() restores an entry and fires popstate like browsers.
       history: {
-        length: 1,
-        pushState(state, title, url) { this.length += 1; location.href = String(url); },
-        replaceState(state, title, url) { location.href = String(url); },
+        entries: [{ state: null, url: location.href }],
+        index: 0,
+        get length() { return this.entries.length; },
+        get state() { return this.entries[this.index].state; },
+        pushState(state, title, url) {
+          this.entries.splice(this.index + 1, Infinity, { state, url: String(url) });
+          this.index += 1;
+          location.href = String(url);
+        },
+        replaceState(state, title, url) {
+          this.entries[this.index] = { state, url: String(url) };
+          location.href = String(url);
+        },
+        go(delta) {
+          this.index += delta;
+          location.href = this.entries[this.index].url;
+          return windowListeners.popstate?.();
+        },
       },
       addEventListener(name, callback) { windowListeners[name] = callback; },
     },

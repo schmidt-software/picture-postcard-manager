@@ -7,10 +7,11 @@ let currentLanguage = "en";
 let currentMessage = null;
 let currentDetail = null;
 let detailState = "";
-let detailRequest = 0;
+// Incremented on every route change; async views drop responses for older routes.
+let routeRequest = 0;
+let listRequest = 0;
 let shareState = "";
-let editRequest = 0;
-let currentItems = [];
+let currentItems = null;
 
 function translate(key, params = {}) {
   const value = translations[currentLanguage][key] ?? translations.en[key] ?? key;
@@ -196,8 +197,6 @@ async function api(path, options = {}) {
 }
 
 function showView(name) {
-  if (name !== "detail") detailRequest += 1;
-  if (name !== "edit") editRequest += 1;
   if (name !== "detail" && name !== "edit") currentDetail = null;
   if (name !== "edit") resetUploads();
   document.querySelectorAll(".view").forEach((v) => (v.hidden = v.id !== `view-${name}`));
@@ -206,16 +205,41 @@ function showView(name) {
   if (name === "browse") return loadList();
 }
 
+function fragmentUuid(fragment) {
+  return fragment.match(/^postcards\/([^/]+)/)?.[1] ?? null;
+}
+
+// Each history entry records how many app entries lie below it (depth) and how
+// many directly preceding entries show the same postcard (run).
 function navigate(fragment, { replace = false } = {}) {
+  const current = window.history.state ?? { depth: 0, run: 0 };
+  const uuid = fragmentUuid(fragment);
+  const state = replace ? current : {
+    depth: current.depth + 1,
+    run: uuid && uuid === fragmentUuid(window.location.hash.slice(1)) ? current.run + 1 : 0,
+  };
   const url = new URL(window.location.href);
   url.hash = fragment;
-  window.history[replace ? "replaceState" : "pushState"](null, "", url);
+  window.history[replace ? "replaceState" : "pushState"](state, "", url);
   return route();
+}
+
+// Leaves the current postcard: steps back over its entries when they were
+// opened in the app, otherwise replaces the current entry with the overview.
+function leavePostcard(keepDetail = false) {
+  const { depth = 0, run = 0 } = window.history.state ?? {};
+  const steps = keepDetail ? 1 : run + 1;
+  if (fragmentUuid(window.location.hash.slice(1)) && (!keepDetail || run > 0) && steps <= depth) {
+    window.history.go(-steps);
+    return Promise.resolve();
+  }
+  return navigate("browse", { replace: true });
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function route() {
+  routeRequest += 1;
   const fragment = window.location.hash.slice(1);
   if (fragment.startsWith("postcards/")) {
     const [id, action, ...rest] = fragment.slice("postcards/".length).split("/");
@@ -276,7 +300,7 @@ function renderDetail() {
 }
 
 async function openDetail(id) {
-  const request = ++detailRequest;
+  const request = routeRequest;
   currentDetail = null;
   shareState = "";
   detailState = id ? "detailLoading" : "detailInvalid";
@@ -286,7 +310,7 @@ async function openDetail(id) {
   if (!id) return;
   try {
     const postcard = await api(`/api/postcards/by-uuid/${id}`);
-    if (request !== detailRequest) return;
+    if (request !== routeRequest) return;
     currentDetail = postcard;
     detailState = "";
     const url = new URL(window.location.href);
@@ -294,7 +318,7 @@ async function openDetail(id) {
     $("#share-url").value = url.href;
     renderDetail();
   } catch (error) {
-    if (request !== detailRequest) return;
+    if (request !== routeRequest) return;
     detailState = error.message === "postcard not found" ? "detailMissing" : "detailLoadFailed";
     renderDetail();
     if (detailState === "detailLoadFailed") showApiError(error);
@@ -419,9 +443,12 @@ function imagePreview(imagePath, side, fullSize = false) {
 }
 
 async function loadList() {
+  const request = ++listRequest;
   try {
     const q = $("#search").value.trim();
-    currentItems = await api(`/api/postcards${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+    const items = await api(`/api/postcards${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+    if (request !== listRequest) return;
+    currentItems = items;
     renderList();
   } catch (err) {
     showApiError(err);
@@ -430,6 +457,7 @@ async function loadList() {
 
 // Builds the overview from the last loaded items, also after a language change.
 function renderList() {
+  if (!currentItems) return;
   $("#postcard-list").replaceChildren(...currentItems.map((p) => {
     const tr = document.createElement("tr");
     const idCell = document.createElement("td");
@@ -502,16 +530,25 @@ function renderList() {
 // Opens the form with the postcard's current server state, never a list snapshot.
 async function openEdit(uuid) {
   if (currentDetail?.uuid !== uuid) currentDetail = null;
-  const request = ++editRequest;
+  const request = routeRequest;
+  showView("edit");
+  setFormLoading(true);
   try {
     const postcard = await api(`/api/postcards/by-uuid/${uuid}`);
-    if (request !== editRequest) return;
+    if (request !== routeRequest) return;
     openForm(postcard);
   } catch (error) {
-    if (request !== editRequest) return;
+    if (request !== routeRequest) return;
     showApiError(error);
-    return navigate("browse", { replace: true });
+    // A temporary failure returns to the detail page the edit was opened from.
+    return leavePostcard(error.message !== "postcard not found");
   }
+}
+
+function setFormLoading(loading) {
+  $("#edit-status").hidden = !loading;
+  $("#form-title").hidden = loading;
+  $("#postcard-form").hidden = loading;
 }
 
 function openForm(postcard = null) {
@@ -530,6 +567,7 @@ function openForm(postcard = null) {
     ? translate("editPostcard", { id: postcard.id }) : translate("newPostcard");
   $("#delete").hidden = !postcard;
   showView("edit");
+  setFormLoading(false);
 }
 
 $("#postcard-form").addEventListener("submit", async (e) => {
@@ -566,7 +604,7 @@ async function deletePostcard(id) {
     if (!await askConfirmation("confirmDelete", "delete")) return;
     await api(`/api/postcards/${id}`, { method: "DELETE" });
     showMessage("deleted");
-    if ($("#view-browse").hidden) await navigate("browse", { replace: true });
+    if ($("#view-browse").hidden) await leavePostcard();
     else await loadList();
   } catch (err) {
     showApiError(err);
@@ -745,6 +783,6 @@ $("#search").addEventListener("input", () => {
   searchTimer = setTimeout(loadList, 250);
 });
 
-window.addEventListener("hashchange", route);
+// popstate also covers fragment changes; listening to hashchange too would route twice.
 window.addEventListener("popstate", route);
 route();

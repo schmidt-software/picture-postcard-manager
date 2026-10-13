@@ -90,7 +90,8 @@ async function runTests() {
   assert.equal(context.window.location.hash, `#postcards/${firstUuid}`);
 
   context.window.location.hash = "#data";
-  await ui.windowListeners.hashchange();
+  assert.equal(ui.windowListeners.hashchange, undefined); // Only popstate routes.
+  await ui.windowListeners.popstate();
   assert.equal(get("view-data").hidden, false);
   context.window.location.hash = `#postcards/${firstUuid}`;
   await ui.windowListeners.popstate();

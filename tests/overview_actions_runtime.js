@@ -102,10 +102,110 @@ async function runTests() {
   await new Promise(setImmediate);
   assert.equal(context.window.location.hash, `#postcards/${second.uuid}`);
   assert.ok(requests.some((request) => request.url === `/api/postcards/by-uuid/${second.uuid}`));
+  await navigationChecks();
   console.log("Overview action runtime checks passed.");
 }
 
-runTests().catch((error) => {
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((done, failed) => { resolve = done; reject = failed; });
+  return { promise, resolve, reject };
+}
+
+// Review follow-up: stale responses, loading state and history after deletion.
+async function navigationChecks() {
+  const card = { id: 7, uuid: "b962a358-8899-4000-8999-6973bac5d599", front_image_path: "/c.png" };
+  const ok = (data) => ({ ok: true, status: 200, json: async () => data });
+  const flush = () => new Promise(setImmediate);
+  const pending = [];
+  const { run, get, context, postcardForm } = setup();
+  const history = context.window.history;
+  const hash = () => context.window.location.hash;
+  // Before the first list response the overview must not claim to be empty.
+  assert.equal(get("empty-hint").hidden, true);
+  context.fetch = (url, options = {}) => {
+    const response = deferred();
+    pending.push({ url, options, response });
+    return response.promise;
+  };
+  const respond = async (index, data) => {
+    pending[index].response.resolve(data);
+    await flush();
+  };
+
+  // An older list response cannot replace a newer one.
+  run("loadList()");
+  run("loadList()");
+  await respond(1, ok([card]));
+  await respond(0, ok([]));
+  assert.equal(get("postcard-list").children.length, 1);
+  assert.equal(get("empty-hint").hidden, true);
+
+  // While the postcard loads, only a status is shown; New cancels the request.
+  run(`navigate("postcards/${card.uuid}/edit")`);
+  assert.equal(get("view-edit").hidden, false);
+  assert.equal(get("edit-status").hidden, false);
+  assert.equal(get("postcard-form").hidden, true);
+  run('navigate("new")');
+  assert.equal(get("postcard-form").hidden, false);
+  await respond(2, ok(card));
+  assert.equal(postcardForm.elements.id.value, "");
+  assert.equal(hash(), "#new");
+
+  // A temporary failure returns to the detail page the edit was opened from.
+  run(`navigate("postcards/${card.uuid}")`);
+  await respond(3, ok(card));
+  get("detail-edit").emit("click");
+  pending[4].response.reject(new Error("server error"));
+  await flush();
+  await flush();
+  assert.equal(hash(), `#postcards/${card.uuid}`);
+  await respond(5, ok(card));
+  assert.equal(get("view-detail").hidden, false);
+  assert.equal(get("detail-title").textContent, "Postcard #7");
+
+  // Deleting from the edit form steps back over every entry of that postcard.
+  run('navigate("browse")');
+  await respond(6, ok([card]));
+  const browseIndex = history.index;
+  run(`navigate("postcards/${card.uuid}")`);
+  await respond(7, ok(card));
+  get("detail-edit").emit("click");
+  await respond(8, ok(card));
+  assert.equal(postcardForm.elements.id.value, 7);
+  const deletion = get("delete").emit("click");
+  get("confirmation").returnValue = "confirm";
+  await get("confirmation").emit("close");
+  await respond(9, { ok: true, status: 204 });
+  await respond(10, ok([]));
+  await deletion;
+  assert.equal(history.index, browseIndex);
+  assert.equal(hash(), "#browse");
+  assert.equal(get("view-browse").hidden, false);
+
+  // Without app entries to return to (opened directly), the entry is replaced.
+  const direct = setup(null, false, {
+    url: `http://127.0.0.1:8000/#postcards/${card.uuid}/edit`,
+    fetch: async (url, options = {}) => ok(options.method === "DELETE" ? null : url.includes("by-uuid") ? card : []),
+  });
+  await flush();
+  const directDeletion = direct.get("delete").emit("click");
+  direct.get("confirmation").returnValue = "confirm";
+  await direct.get("confirmation").emit("close");
+  await directDeletion;
+  assert.equal(direct.context.window.history.length, 1);
+  assert.equal(direct.context.window.location.hash, "#browse");
+}
+
+let finished = false;
+process.on("exit", (code) => {
+  if (!finished && code === 0) {
+    console.error("Overview action runtime checks did not finish.");
+    process.exitCode = 1;
+  }
+});
+runTests().then(() => { finished = true; }, (error) => {
   console.error(error);
   process.exitCode = 1;
 });

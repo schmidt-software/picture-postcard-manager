@@ -30,6 +30,7 @@ class Element {
     (this.listeners[name] ??= []).push({ callback, once: options.once });
   }
   async emit(name, event = {}) {
+    if (name === "close") this.open = false; // Browsers close the dialog before the event.
     const listeners = [...(this.listeners[name] || [])];
     this.listeners[name] = listeners.filter((listener) => !listener.once);
     await Promise.all(listeners.map(({ callback }) =>
@@ -80,7 +81,11 @@ function setup(saved = null, blockedStorage = false, options = {}) {
   const context = vm.createContext({
     window: {
       location,
-      history: { pushState(state, title, url) { location.href = String(url); } },
+      history: {
+        length: 1,
+        pushState(state, title, url) { this.length += 1; location.href = String(url); },
+        replaceState(state, title, url) { location.href = String(url); },
+      },
       addEventListener(name, callback) { windowListeners[name] = callback; },
     },
     navigator: {},

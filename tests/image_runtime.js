@@ -72,7 +72,10 @@ function setup() {
   const context = vm.createContext({
     window: {
       location: new URL("http://127.0.0.1:8000/"),
-      history: { pushState(state, title, url) { context.window.location.href = String(url); } },
+      history: {
+        pushState(state, title, url) { context.window.location.href = String(url); },
+        replaceState(state, title, url) { context.window.location.href = String(url); },
+      },
       addEventListener() {},
     },
     URL,

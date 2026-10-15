@@ -493,6 +493,9 @@ const FILTER_STORAGE_KEY = "picture-postcard-manager-filters";
 const FILTER_KEYS = ["place", "region", "year", "tag"];
 let currentFilters = { place: "", region: "", year: "", tag: "" };
 let filterValues = { place: [], region: [], year: [], tag: [] };
+// Incremented per filter-values request; stale responses must not overwrite
+// the dropdowns a newer request already rebuilt.
+let filterOptionsRequest = 0;
 
 function loadSavedFilters() {
   try {
@@ -537,22 +540,26 @@ function renderFilterOptions() {
 }
 
 async function loadFilterOptions() {
+  const request = ++filterOptionsRequest;
   try {
     const values = await api("/api/postcards/filters");
+    if (request !== filterOptionsRequest) return;
     for (const key of FILTER_KEYS) {
       if (Array.isArray(values?.[key])) filterValues[key] = values[key];
     }
   } catch {
+    if (request !== filterOptionsRequest) return;
     // The dropdowns keep their previous values; filtering still works.
   }
   renderFilterOptions();
 }
 
 // Loads one page of the overview; append=true fetches the page after the rows
-// loaded so far, otherwise the list restarts at the first page. The request
-// counter drops stale responses (and their errors): only the newest request
-// may update the list, so a slow response for an old sort order, filter set
-// or search term never overwrites or extends the rows of a newer one.
+// loaded so far, otherwise the list restarts at the first page. Only the
+// newest request may update the list, the error display and the load-more
+// state: an older, slower response (e.g. for a previous sort order, filter
+// set or search term) is dropped on both the success and the error path, so
+// it never overwrites or extends the rows of a newer one.
 async function loadList(append = false) {
   const request = ++listRequest;
   try {

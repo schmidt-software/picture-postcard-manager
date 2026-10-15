@@ -77,6 +77,7 @@ async function runTests() {
 
   await combinationTests();
   await raceTests();
+  await runRaceTests();
 
   console.log("Filter runtime checks passed.");
 }
@@ -179,6 +180,96 @@ async function raceTests() {
   await failing;
   assert.deepEqual(rowIds(ui), [3]);
   assert.equal(get("message").hidden, true, "stale error must not be shown");
+}
+
+function makeItems(ids) {
+  return ids.map((id) => ({
+    id,
+    uuid: "b962a358-8899-4000-8999-6973bac5d599",
+    front_image_path: "", back_image_path: "", place: "", year: "",
+    tags: [], updated_at: "2026-10-04",
+  }));
+}
+
+function listedIds(ui) {
+  return ui.get("postcard-list").children.map((tr) => Number(tr.children[0].textContent));
+}
+
+// Overlapping requests resolved in reverse order: only the newest request may
+// update the list, the error display and the filter dropdowns. Without the
+// request guards in loadList()/loadFilterOptions() every check below fails.
+async function runRaceTests() {
+  const ui = setup();
+  const { run, get, context } = ui;
+  const pending = [];
+  context.fetch = async (url) => {
+    const deferred = { url };
+    deferred.body = new Promise((resolve) => (deferred.resolve = resolve));
+    pending.push(deferred);
+    return { ok: !url.includes("fail"), status: 200, json: () => deferred.body };
+  };
+
+  // A slower response for an old filter must not replace a newer filter's list.
+  run('currentFilters.place = "Old town"');
+  const oldLoad = run("loadList()");
+  run('currentFilters.place = "New town"');
+  const newLoad = run("loadList()");
+  assert.equal(pending.length, 2);
+  pending[1].resolve(makeItems([7]));
+  await newLoad;
+  assert.deepEqual(listedIds(ui), [7]);
+  pending[0].resolve(makeItems([1, 2, 3]));
+  await oldLoad;
+  assert.deepEqual(listedIds(ui), [7], "stale response overwrote a newer list");
+
+  // A stale append for an old filter must not extend the new filter's list.
+  pending.length = 0;
+  const staleAppend = run("loadList(true)");
+  run('currentFilters.place = "Other town"');
+  const freshLoad = run("loadList()");
+  pending[1].resolve(makeItems([9]));
+  await freshLoad;
+  pending[0].resolve(makeItems([4, 5]));
+  await staleAppend;
+  assert.deepEqual(listedIds(ui), [9], "stale append extended a newer list");
+
+  // The load-more state follows the newest request only: a stale short page
+  // must not hide the button a newer full page keeps visible.
+  pending.length = 0;
+  const pageSize = run("PAGE_SIZE");
+  const shortLoad = run("loadList()");
+  const fullLoad = run("loadList()");
+  pending[1].resolve(makeItems(Array.from({ length: pageSize }, (_, i) => i + 1)));
+  await fullLoad;
+  assert.equal(get("load-more").hidden, false);
+  pending[0].resolve(makeItems([1]));
+  await shortLoad;
+  assert.equal(get("load-more").hidden, false, "stale response hid the load-more button");
+
+  // A stale failure must not raise an error for a list the user already left.
+  pending.length = 0;
+  get("search").value = "fail";
+  const failing = run("loadList()");
+  get("search").value = "";
+  const succeeding = run("loadList()");
+  pending[1].resolve(makeItems([8]));
+  await succeeding;
+  pending[0].resolve({ error: "postcard must be an object" });
+  await failing;
+  assert.equal(get("message").hidden, true, "stale failure displayed an error");
+  assert.deepEqual(listedIds(ui), [8]);
+
+  // Stale filter values must not overwrite dropdowns a newer request rebuilt.
+  pending.length = 0;
+  run('currentFilters = { place: "", region: "", year: "", tag: "" }');
+  const oldOptions = run("loadFilterOptions()");
+  const newOptions = run("loadFilterOptions()");
+  pending[1].resolve({ place: ["Current"], region: [], year: [], tag: [] });
+  await newOptions;
+  pending[0].resolve({ place: ["Stale A", "Stale B"], region: [], year: [], tag: [] });
+  await oldOptions;
+  const options = get("filter-place").children.map((option) => option.textContent);
+  assert.deepEqual(options.slice(1), ["Current"], "stale response rebuilt the dropdowns");
 }
 
 runTests().catch((error) => {

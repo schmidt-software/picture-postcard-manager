@@ -85,9 +85,12 @@ Optional values can be left empty.
 
 The legacy `title` and `notes` fields were removed in schema version 5
 ([#23](https://github.com/schmidt-software/picture-postcard-manager/issues/23)).
-Their content is not lost: the migration merges non-empty values into
-`description` as paragraphs in the order title, notes, existing description,
-separated by one blank line each. Empty or whitespace-only values are skipped,
+Their content is not lost: the migration merges non-empty values verbatim into
+`description` in the order title, notes, existing description, with exactly one
+blank line between the text of adjacent pieces (newlines a value already ends
+or starts with count towards that blank line, so nothing is duplicated and the
+original text is never trimmed or altered). Empty or whitespace-only values are
+skipped,
 so records without legacy content keep their description unchanged.
 The API rejects `title` and `notes` as unknown fields on create and update.
 
@@ -494,7 +497,8 @@ the same image files.
 Version-1 to version-4 imports remain supported; records without `tags` import
 with an empty tag list, and legacy `title` and `notes` values are merged into
 `description` using the same format as the database migration (title, then
-notes, then description, as paragraphs separated by one blank line; empty
+notes, then description, preserved verbatim and separated by exactly one blank
+line of combined whitespace at each join; empty
 values are skipped). Version-5 exports round-trip exactly and reject `title`
 and `notes` as unknown fields. An invalid `tags`
 value fails the whole import (nothing is imported).

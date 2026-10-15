@@ -61,17 +61,25 @@ _NO_LOCK = _NoLock()
 def merge_legacy_fields(title, notes, description):
     """Merge the legacy title and notes values into the description.
 
-    Non-empty values become paragraphs in the order title, notes, description,
-    separated by exactly one blank line. Empty or whitespace-only values are
-    skipped; when title and notes are both empty, the description is returned
-    unchanged. Line breaks inside each value are preserved.
+    Values whose content is empty or only whitespace are skipped; all other
+    values are preserved verbatim (never stripped or otherwise altered). The
+    remaining pieces are joined in the order title, notes, description so
+    that exactly one blank line separates the text of adjacent pieces:
+    newlines a piece already ends or starts with count towards that blank
+    line, so no duplicate blank lines are inserted at the joins. When title
+    and notes are both empty, the description is returned unchanged.
     """
-    extras = [value.strip() for value in (title, notes) if value and value.strip()]
-    if not extras:
+    pieces = [value for value in (title, notes) if value and value.strip()]
+    if not pieces:
         return description
     if description and description.strip():
-        extras.append(description.strip())
-    return "\n\n".join(extras)
+        pieces.append(description)
+    merged = pieces[0]
+    for piece in pieces[1:]:
+        trailing = len(merged) - len(merged.rstrip("\n"))
+        leading = len(piece) - len(piece.lstrip("\n"))
+        merged += "\n" * max(0, 2 - trailing - leading) + piece
+    return merged
 
 
 class Database:

@@ -76,7 +76,7 @@ class DatabaseTest(unittest.TestCase):
                 self.assertGreater(reopened.create({"front_image_path": "/front.jpg"})["id"], 50)
 
     def test_legacy_merge_format(self):
-        """Title, then notes, then description, joined by single blank lines."""
+        """Title, then notes, then description, verbatim with single blank-line joins."""
         cases = (
             (("", "", ""), ""),
             (("", "", "Desc"), "Desc"),
@@ -86,9 +86,16 @@ class DatabaseTest(unittest.TestCase):
             (("Title", "", "Desc"), "Title\n\nDesc"),
             (("", "Notes", "Desc"), "Notes\n\nDesc"),
             (("Title", "Notes", "Desc"), "Title\n\nNotes\n\nDesc"),
-            # Whitespace-only values are skipped; no duplicate blank lines.
+            # Whitespace-only values are skipped.
             ((" \n ", "\t", "Desc"), "Desc"),
-            (("Title\n", "\nNotes", "Desc\n\n"), "Title\n\nNotes\n\nDesc"),
+            # Existing newlines at joins count towards the blank line; nothing
+            # is duplicated and the payload is not trimmed (trailing newlines
+            # of the last piece are kept).
+            (("Title\n", "\nNotes", "Desc\n\n"), "Title\n\nNotes\n\nDesc\n\n"),
+            (("Title\n\n", "Notes", ""), "Title\n\nNotes"),
+            (("Title", "\n\n\nNotes", ""), "Title\n\n\nNotes"),
+            # Non-newline whitespace is preserved verbatim (lossless).
+            ((" Title ", "", "\tDesc "), " Title \n\n\tDesc "),
             # Internal line breaks are preserved.
             (("Title", "Line 1\nLine 2", ""), "Title\n\nLine 1\nLine 2"),
         )
@@ -103,6 +110,9 @@ class DatabaseTest(unittest.TestCase):
             (3, "", "Only notes", "Desc", "Only notes\n\nDesc"),
             (4, "", "", "Untouched", "Untouched"),
             (5, "  ", " \n", "Whitespace legacy", "Whitespace legacy"),
+            # The migration is lossless: surrounding whitespace of non-empty
+            # values is preserved and existing newlines at joins are reused.
+            (6, " Padded ", "Notes\n", "\nDesc ", " Padded \n\nNotes\n\nDesc "),
         )
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "v4.db"

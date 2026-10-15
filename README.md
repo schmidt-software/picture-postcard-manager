@@ -154,6 +154,13 @@ description and tags; empty optional fields are omitted. Images use the same
 same-origin restrictions and unavailable-image fallbacks as the overview.
 Choose **Edit** to change the postcard, or **Back to overview** to return.
 
+Each overview row also provides edit and delete icon buttons with localized
+tooltips and accessible labels. These actions do not open the detail page.
+Editing opens `#postcards/<uuid>/edit`, which always loads the postcard's
+current data from the API, so the edit form can be reloaded and Back/Forward
+work as expected. Deletion requires confirmation; cancelling or a failed request
+leaves the postcard in the overview.
+
 Each postcard has a direct link such as
 `http://127.0.0.1:8000/#postcards/b962a358-8899-4000-8999-6973bac5d599`.
 Opening or reloading it fetches that postcard from the API. Browser Back/Forward

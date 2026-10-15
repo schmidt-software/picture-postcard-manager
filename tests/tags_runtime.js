@@ -68,7 +68,7 @@ async function runTests() {
     json: async () => [{ id: 1, tags: ["x, y", "<img src=x>"], updated_at: "u" }],
   });
   await run("loadList()");
-  const cell = get("postcard-list").children[0].children.at(-2);
+  const cell = get("postcard-list").children[0].children.at(-3);
   assert.deepEqual(cell.children[0].children.map((li) => li.textContent), ["x, y", "<img src=x>"]);
   console.log("Tag runtime checks passed.");
 }

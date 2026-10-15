@@ -30,10 +30,11 @@ class Element {
     (this.listeners[name] ??= []).push({ callback, once: options.once });
   }
   async emit(name, event = {}) {
+    if (name === "close") this.open = false; // Browsers close the dialog before the event.
     const listeners = [...(this.listeners[name] || [])];
     this.listeners[name] = listeners.filter((listener) => !listener.once);
     await Promise.all(listeners.map(({ callback }) =>
-      callback({ target: this, preventDefault() {}, ...event })));
+      callback({ target: this, preventDefault() {}, stopPropagation() {}, ...event })));
   }
 }
 
@@ -80,7 +81,27 @@ function setup(saved = null, blockedStorage = false, options = {}) {
   const context = vm.createContext({
     window: {
       location,
-      history: { pushState(state, title, url) { location.href = String(url); } },
+      // A session history stack; go() restores an entry and fires popstate like browsers.
+      history: {
+        entries: [{ state: null, url: location.href }],
+        index: 0,
+        get length() { return this.entries.length; },
+        get state() { return this.entries[this.index].state; },
+        pushState(state, title, url) {
+          this.entries.splice(this.index + 1, Infinity, { state, url: String(url) });
+          this.index += 1;
+          location.href = String(url);
+        },
+        replaceState(state, title, url) {
+          this.entries[this.index] = { state, url: String(url) };
+          location.href = String(url);
+        },
+        go(delta) {
+          this.index += delta;
+          location.href = this.entries[this.index].url;
+          return windowListeners.popstate?.();
+        },
+      },
       addEventListener(name, callback) { windowListeners[name] = callback; },
     },
     navigator: {},
@@ -304,7 +325,7 @@ async function runTests() {
   await run("loadList()");
   const cells = get("postcard-list").children[0].children.map((el) => el.textContent);
   assert.equal(cells[0], 42);
-  assert.equal(cells.at(-1), content.updated_at);
+  assert.equal(cells.at(-2), content.updated_at);
   await get("postcard-list").children[0].emit("click");
   assert.equal(get("detail-title").textContent, "Postkarte #42");
   await get("detail-edit").emit("click");

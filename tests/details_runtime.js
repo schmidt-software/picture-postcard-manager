@@ -68,8 +68,10 @@ async function runTests() {
   assert.equal(get("view-edit").hidden, false);
   assert.equal(postcardForm.elements.region.value, postcard.region);
   assert.equal(postcardForm.elements.description.value, postcard.description);
-  assert.equal(context.window.location.hash, `#postcards/${firstUuid}`);
+  assert.equal(context.window.location.hash, `#postcards/${firstUuid}/edit`);
   await get("cancel").emit("click");
+  await flush(); // Going back routes on popstate.
+  assert.equal(context.window.location.hash, `#postcards/${firstUuid}`);
   assert.equal(get("view-detail").hidden, false);
   assert.equal(get("detail-title").textContent, "Postcard #42");
   context.fetch = async (url) => response(url === "/api/postcards" ? [postcard] : postcard);
@@ -89,7 +91,8 @@ async function runTests() {
   assert.equal(context.window.location.hash, `#postcards/${firstUuid}`);
 
   context.window.location.hash = "#data";
-  await ui.windowListeners.hashchange();
+  assert.equal(ui.windowListeners.hashchange, undefined); // Only popstate routes.
+  await ui.windowListeners.popstate();
   assert.equal(get("view-data").hidden, false);
   context.window.location.hash = `#postcards/${firstUuid}`;
   await ui.windowListeners.popstate();

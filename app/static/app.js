@@ -7,8 +7,11 @@ let currentLanguage = "en";
 let currentMessage = null;
 let currentDetail = null;
 let detailState = "";
-let detailRequest = 0;
+// Incremented on every route change; async views drop responses for older routes.
+let routeRequest = 0;
+let listRequest = 0;
 let shareState = "";
+let currentItems = null;
 
 function translate(key, params = {}) {
   const value = translations[currentLanguage][key] ?? translations.en[key] ?? key;
@@ -151,6 +154,7 @@ function applyLanguage(language) {
   renderMessage();
   renderConfirmation();
   renderDetail();
+  renderList();
   try {
     localStorage.setItem(LANGUAGE_STORAGE_KEY, currentLanguage);
   } catch {
@@ -168,6 +172,7 @@ function renderConfirmation() {
 
 function askConfirmation(key, action) {
   const dialog = $("#confirmation");
+  if (dialog.open) return Promise.resolve(false);
   currentConfirmation = { key, action };
   renderConfirmation();
   dialog.returnValue = "";
@@ -192,34 +197,61 @@ async function api(path, options = {}) {
 }
 
 function showView(name) {
-  if (name !== "detail") detailRequest += 1;
+  if (name !== "detail" && name !== "edit") currentDetail = null;
   if (name !== "edit") resetUploads();
   document.querySelectorAll(".view").forEach((v) => (v.hidden = v.id !== `view-${name}`));
   document.querySelectorAll("nav button").forEach((b) =>
     b.classList.toggle("active", b.dataset.view === name));
-  if (name === "browse") loadList();
+  if (name === "browse") return loadList();
 }
 
-function navigate(fragment) {
+function fragmentUuid(fragment) {
+  return fragment.match(/^postcards\/([^/]+)/)?.[1] ?? null;
+}
+
+// Each history entry records how many app entries lie below it (depth) and how
+// many directly preceding entries show the same postcard (run).
+function navigate(fragment, { replace = false } = {}) {
+  const current = window.history.state ?? { depth: 0, run: 0 };
+  const uuid = fragmentUuid(fragment);
+  const state = replace ? current : {
+    depth: current.depth + 1,
+    run: uuid && uuid === fragmentUuid(window.location.hash.slice(1)) ? current.run + 1 : 0,
+  };
   const url = new URL(window.location.href);
   url.hash = fragment;
-  window.history.pushState(null, "", url);
+  window.history[replace ? "replaceState" : "pushState"](state, "", url);
   return route();
 }
 
+// Leaves the current postcard: steps back over its entries when they were
+// opened in the app, otherwise replaces the current entry with the overview.
+function leavePostcard(keepDetail = false) {
+  const { depth = 0, run = 0 } = window.history.state ?? {};
+  const steps = keepDetail ? 1 : run + 1;
+  if (fragmentUuid(window.location.hash.slice(1)) && steps <= depth) {
+    window.history.go(-steps);
+    return Promise.resolve();
+  }
+  return navigate("browse", { replace: true });
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
 function route() {
+  routeRequest += 1;
   const fragment = window.location.hash.slice(1);
   if (fragment.startsWith("postcards/")) {
-    const id = fragment.slice("postcards/".length);
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id)) {
+    const [id, action, ...rest] = fragment.slice("postcards/".length).split("/");
+    if (!UUID_PATTERN.test(id) || rest.length || (action !== undefined && action !== "edit")) {
       return openDetail(null);
     }
-    return openDetail(id);
+    return action === "edit" ? openEdit(id) : openDetail(id);
   }
   if (fragment === "new") {
     openForm();
   } else {
-    showView(fragment === "data" ? "data" : "browse");
+    return showView(fragment === "data" ? "data" : "browse");
   }
 }
 
@@ -234,9 +266,6 @@ function renderDetail() {
   $("#detail-content").hidden = !currentDetail;
   $("#detail-edit").hidden = !currentDetail;
   $("#share-status").textContent = shareState ? translate(shareState) : "";
-  document.querySelectorAll("[data-postcard-id]").forEach((row) => {
-    row.setAttribute("aria-label", translate("viewPostcard", { id: row.dataset.postcardId }));
-  });
   if (!currentDetail) return;
 
   const postcard = currentDetail;
@@ -271,7 +300,7 @@ function renderDetail() {
 }
 
 async function openDetail(id) {
-  const request = ++detailRequest;
+  const request = routeRequest;
   currentDetail = null;
   shareState = "";
   detailState = id ? "detailLoading" : "detailInvalid";
@@ -281,7 +310,7 @@ async function openDetail(id) {
   if (!id) return;
   try {
     const postcard = await api(`/api/postcards/by-uuid/${id}`);
-    if (request !== detailRequest) return;
+    if (request !== routeRequest) return;
     currentDetail = postcard;
     detailState = "";
     const url = new URL(window.location.href);
@@ -289,7 +318,7 @@ async function openDetail(id) {
     $("#share-url").value = url.href;
     renderDetail();
   } catch (error) {
-    if (request !== detailRequest) return;
+    if (request !== routeRequest) return;
     detailState = error.message === "postcard not found" ? "detailMissing" : "detailLoadFailed";
     renderDetail();
     if (detailState === "detailLoadFailed") showApiError(error);
@@ -298,7 +327,7 @@ async function openDetail(id) {
 
 $("#detail-back").addEventListener("click", () => navigate("browse"));
 $("#detail-edit").addEventListener("click", () => {
-  if (currentDetail) openForm(currentDetail);
+  if (currentDetail) return navigate(`postcards/${currentDetail.uuid}/edit`);
 });
 $("#copy-share-link").addEventListener("click", async () => {
   if (!currentDetail) return;
@@ -414,56 +443,113 @@ function imagePreview(imagePath, side, fullSize = false) {
 }
 
 async function loadList() {
+  const request = ++listRequest;
   try {
     const q = $("#search").value.trim();
     const items = await api(`/api/postcards${q ? `?q=${encodeURIComponent(q)}` : ""}`);
-    const tbody = $("#postcard-list");
-    tbody.replaceChildren(...items.map((p) => {
-      const tr = document.createElement("tr");
-      const idCell = document.createElement("td");
-      idCell.textContent = p.id;
-      tr.append(idCell);
-      tr.append(imagePreview(p.front_image_path, "frontImage"),
-        imagePreview(p.back_image_path, "backImage"));
-      for (const field of ["place", "year"]) {
-        const td = document.createElement("td");
-        td.className = "postcard-value";
-        td.textContent = p[field] ?? "";
-        tr.append(td);
-      }
-      const tagsCell = document.createElement("td");
-      const tagList = document.createElement("ul");
-      tagList.className = "tag-list postcard-tags";
-      tagList.append(...(p.tags ?? []).map((tag) => {
-        const li = document.createElement("li");
-        li.className = "tag";
-        li.textContent = tag;
-        return li;
-      }));
-      tagsCell.append(tagList);
-      tr.append(tagsCell);
-      const updatedCell = document.createElement("td");
-      updatedCell.textContent = p.updated_at;
-      tr.append(updatedCell);
-      tr.tabIndex = 0;
-      tr.setAttribute("aria-label", translate("viewPostcard", { id: p.id }));
-      tr.dataset.postcardId = p.id;
-      tr.addEventListener("click", () => navigate(`postcards/${p.uuid}`));
-      tr.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          navigate(`postcards/${p.uuid}`);
-        }
-      });
-      return tr;
-    }));
-    $("#empty-hint").hidden = items.length > 0;
+    if (request !== listRequest) return;
+    currentItems = items;
+    renderList();
   } catch (err) {
     showApiError(err);
   }
 }
 
+// Builds the overview from the last loaded items, also after a language change.
+function renderList() {
+  if (!currentItems) return;
+  $("#postcard-list").replaceChildren(...currentItems.map((p) => {
+    const tr = document.createElement("tr");
+    const idCell = document.createElement("td");
+    idCell.textContent = p.id;
+    tr.append(idCell);
+    tr.append(imagePreview(p.front_image_path, "frontImage"),
+      imagePreview(p.back_image_path, "backImage"));
+    for (const field of ["place", "year"]) {
+      const td = document.createElement("td");
+      td.className = "postcard-value";
+      td.textContent = p[field] ?? "";
+      tr.append(td);
+    }
+    const tagsCell = document.createElement("td");
+    const tagList = document.createElement("ul");
+    tagList.className = "tag-list postcard-tags";
+    tagList.append(...(p.tags ?? []).map((tag) => {
+      const li = document.createElement("li");
+      li.className = "tag";
+      li.textContent = tag;
+      return li;
+    }));
+    tagsCell.append(tagList);
+    tr.append(tagsCell);
+    const updatedCell = document.createElement("td");
+    updatedCell.textContent = p.updated_at;
+    tr.append(updatedCell);
+    const actionCell = document.createElement("td");
+    const actions = document.createElement("div");
+    actions.className = "row-actions";
+    for (const [key, name, action] of [
+      ["editPostcard", "edit", () => navigate(`postcards/${p.uuid}/edit`)],
+      ["deletePostcard", "delete", () => deletePostcard(p.id)],
+    ]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `row-${name}`;
+      const label = translate(key, { id: p.id });
+      button.setAttribute("aria-label", label);
+      button.title = label;
+      const symbol = document.createElement("span");
+      symbol.className = `icon icon-${name}`;
+      symbol.setAttribute("aria-hidden", "true");
+      button.append(symbol);
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        return action();
+      });
+      actions.append(button);
+    }
+    actionCell.append(actions);
+    tr.append(actionCell);
+    tr.tabIndex = 0;
+    tr.setAttribute("aria-label", translate("viewPostcard", { id: p.id }));
+    tr.addEventListener("click", () => navigate(`postcards/${p.uuid}`));
+    tr.addEventListener("keydown", (event) => {
+      if (event.target !== tr) return;
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        navigate(`postcards/${p.uuid}`);
+      }
+    });
+    return tr;
+  }));
+  $("#empty-hint").hidden = currentItems.length > 0;
+}
+
 // --- Entry form -------------------------------------------------------------
+
+// Opens the form with the postcard's current server state, never a list snapshot.
+async function openEdit(uuid) {
+  if (currentDetail?.uuid !== uuid) currentDetail = null;
+  const request = routeRequest;
+  showView("edit");
+  setFormLoading(true);
+  try {
+    const postcard = await api(`/api/postcards/by-uuid/${uuid}`);
+    if (request !== routeRequest) return;
+    openForm(postcard);
+  } catch (error) {
+    if (request !== routeRequest) return;
+    showApiError(error);
+    // A temporary failure returns to the view the edit was opened from.
+    return leavePostcard(error.message !== "postcard not found");
+  }
+}
+
+function setFormLoading(loading) {
+  $("#edit-status").hidden = !loading;
+  $("#form-title").hidden = loading;
+  $("#postcard-form").hidden = loading;
+}
 
 function openForm(postcard = null) {
   const form = $("#postcard-form");
@@ -481,6 +567,7 @@ function openForm(postcard = null) {
     ? translate("editPostcard", { id: postcard.id }) : translate("newPostcard");
   $("#delete").hidden = !postcard;
   showView("edit");
+  setFormLoading(false);
 }
 
 $("#postcard-form").addEventListener("submit", async (e) => {
@@ -502,28 +589,41 @@ $("#postcard-form").addEventListener("submit", async (e) => {
     if (id) await api(`/api/postcards/${id}`, { method: "PUT", body: JSON.stringify(data) });
     else await api("/api/postcards", { method: "POST", body: JSON.stringify(data) });
     showMessage("saved");
-    navigate("browse");
+    navigate("browse", { replace: true });
   } catch (err) {
     showApiError(err);
   }
 });
 
-$("#delete").addEventListener("click", async () => {
-  const id = $("#postcard-form").elements.id.value;
-  if (!id || !await askConfirmation("confirmDelete", "delete")) return;
+let deletionPending = false;
+
+async function deletePostcard(id) {
+  if (!id || deletionPending) return;
+  deletionPending = true;
+  // Decide where to go from the view the deletion started in: the user may open
+  // another view while the request is running.
+  const fromForm = !$("#view-edit").hidden;
   try {
+    if (!await askConfirmation("confirmDelete", "delete")) return;
+    const request = routeRequest;
     await api(`/api/postcards/${id}`, { method: "DELETE" });
     showMessage("deleted");
-    navigate("browse");
+    if (request === routeRequest && fromForm) await leavePostcard();
+    else if (!$("#view-browse").hidden) await loadList();
   } catch (err) {
     showApiError(err);
+  } finally {
+    deletionPending = false;
   }
-});
+}
+
+$("#delete").addEventListener("click", () =>
+  deletePostcard($("#postcard-form").elements.id.value));
 
 $("#cancel").addEventListener("click", () => {
   const id = $("#postcard-form").elements.id.value;
-  return navigate(id && String(currentDetail?.id) === String(id)
-    ? `postcards/${currentDetail.uuid}` : "browse");
+  // Step back instead of pushing a new entry, so Back does not reopen the form.
+  return leavePostcard(Boolean(id) && String(currentDetail?.id) === String(id));
 });
 $("#postcard-form").elements.front_image_path.addEventListener("input", (event) => {
   if (event.target.value.trim()) {
@@ -687,6 +787,6 @@ $("#search").addEventListener("input", () => {
   searchTimer = setTimeout(loadList, 250);
 });
 
-window.addEventListener("hashchange", route);
+// popstate also covers fragment changes; listening to hashchange too would route twice.
 window.addEventListener("popstate", route);
 route();

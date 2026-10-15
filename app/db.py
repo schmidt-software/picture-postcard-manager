@@ -136,14 +136,41 @@ class Database:
         for conn in connections:
             conn.close()
 
+    def release_thread_connection(self):
+        """Close and unregister the calling thread's connection, if any.
+
+        Request handlers call this when a request finishes so short-lived
+        server threads do not leak connections; the next operation on this
+        thread transparently opens a fresh one. The shared in-memory
+        connection is never released this way, only by close().
+        """
+        if self._shared:
+            return
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            return
+        self._local.conn = None
+        with self._lock:
+            if conn in self._connections:
+                self._connections.remove(conn)
+        conn.close()
+
+    def open_connection_count(self):
+        """Return the number of currently registered connections (for tests)."""
+        with self._lock:
+            return len(self._connections)
+
     def _write_lock(self):
         """Serialize access for the shared in-memory connection only."""
         return self._lock if self._shared else _NO_LOCK
 
     def ping(self):
         """Raise sqlite3.Error when the database is not reachable."""
-        with self._lock:
-            self._conn.execute("SELECT 1").fetchone()
+        # Resolve the connection first: for file databases _conn may register
+        # a new per-thread connection, which itself takes the registry lock.
+        conn = self._conn
+        with self._write_lock():
+            conn.execute("SELECT 1").fetchone()
 
     @staticmethod
     def _clean(data):

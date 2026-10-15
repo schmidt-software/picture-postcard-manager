@@ -134,6 +134,44 @@ class PaginationApiTest(unittest.TestCase):
                 self.assertEqual(status, 400)
                 self.assertIn("error", body)
 
+    def test_connections_are_released_after_requests(self):
+        """Request threads must not leak SQLite connections (one per request).
+
+        ThreadingHTTPServer serves each connection in a fresh thread; the
+        handler releases the thread-local database connection when the
+        request finishes, so the registry stays bounded regardless of how
+        many requests were served.
+        """
+        baseline = self.db.open_connection_count()
+        for _ in range(40):
+            status, _items = self.get("/api/postcards?limit=1")
+            self.assertEqual(status, 200)
+        # Allow a small number of still-finishing handler threads.
+        self.assertLessEqual(self.db.open_connection_count(), baseline + 2)
+
+    def test_database_still_works_from_worker_threads(self):
+        """After a release, the next operation on a thread reopens a connection."""
+        errors = []
+
+        def work(index):
+            try:
+                self.db.list(limit=1)
+                self.db.release_thread_connection()
+                created = self.db.create({"front_image_path": f"/thread-{index}.jpg"})
+                self.assertIsNotNone(self.db.get(created["id"]))
+                self.db.release_thread_connection()
+            except Exception as exc:  # pragma: no cover - failure detail
+                errors.append(exc)
+
+        baseline = self.db.open_connection_count()
+        threads = [threading.Thread(target=work, args=(i,)) for i in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(self.db.open_connection_count(), baseline)
+
     def test_streamed_image_upload_and_download(self):
         data = PNG + b"\x00" * (3 * 1024 * 1024)
         conn = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=30)

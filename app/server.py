@@ -26,6 +26,18 @@ class Handler(BaseHTTPRequestHandler):
     db: Database = None  # injected by make_server
     images: ImageStore = None  # injected by make_server
 
+    def finish(self):
+        """Release this request thread's database connection after the response.
+
+        ThreadingHTTPServer runs every request in a fresh thread; without this
+        each thread would leave its thread-local SQLite connection open until
+        Database.close(), accumulating one connection per request.
+        """
+        try:
+            super().finish()
+        finally:
+            self.db.release_thread_connection()
+
     # --- helpers -----------------------------------------------------------
 
     def _send_json(self, status, data, extra_headers=None):

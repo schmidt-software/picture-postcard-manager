@@ -381,7 +381,10 @@ a page; both combine with `q`. Invalid values return HTTP 400. `GET /api/export`
 always exports the whole collection.
 
 The server uses one SQLite connection per request thread with WAL journal mode
-for file databases, so reads do not block while another request writes. Uploads
+for file databases, so reads do not block while another request writes. Each
+connection is closed when its request finishes, so the number of open
+connections stays bounded regardless of how many requests have been served.
+Uploads
 and image downloads are streamed in 1 MiB chunks instead of being buffered
 completely in memory; the 20 MiB per-image limit is unchanged, and an upload
 that ends early is rejected without leaving a partial file.

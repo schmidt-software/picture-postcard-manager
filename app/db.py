@@ -81,6 +81,11 @@ class Database:
     def close(self):
         self._conn.close()
 
+    def ping(self):
+        """Raise sqlite3.Error when the database is not reachable."""
+        with self._lock:
+            self._conn.execute("SELECT 1").fetchone()
+
     @staticmethod
     def _clean(data):
         if not isinstance(data, dict):

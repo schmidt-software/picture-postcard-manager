@@ -223,8 +223,8 @@ It is independent of the checkout directory name because `compose.yaml` sets the
 project name. Startup creates the database parent and image directories,
 including with empty storage. Directory or SQLite initialization failures stop
 startup with an error in `docker compose logs app`; image upload failures are
-returned as HTTP errors and logged. The healthcheck reads the postcard API using
-Python's standard library. Check startup or health failures with
+returned as HTTP errors and logged. The healthcheck calls the lightweight
+`GET /api/health` endpoint using Python's standard library. Check startup or health failures with
 `docker compose ps` and `docker compose logs --tail=100 app`.
 
 A named volume is used instead of a host bind mount because SQLite databases
@@ -355,6 +355,7 @@ automatically forward host environment variables into the container.
 
 | Method | Path                         | Description                                   |
 |--------|------------------------------|-----------------------------------------------|
+| GET    | `/api/health`                | Lightweight health check (server and database) |
 | GET    | `/api/postcards?q=<text>`    | List postcards (searches stored fields)       |
 | POST   | `/api/postcards`             | Create a postcard                             |
 | GET    | `/api/postcards/<id>`        | Get a postcard                                |

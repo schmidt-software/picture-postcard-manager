@@ -7,6 +7,7 @@ import json
 import mimetypes
 import os
 import re
+import sqlite3
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -116,6 +117,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
         params = parse_qs(url.query)
+        if url.path == "/api/health":
+            try:
+                self.db.ping()
+            except sqlite3.Error as exc:
+                self.log_error("health check failed: %s", exc)
+                return self._send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"status": "error", "error": "database unavailable"},
+                )
+            return self._send_json(HTTPStatus.OK, {"status": "ok"})
         if url.path == "/api/postcards":
             return self._send_json(HTTPStatus.OK, self.db.list(params.get("q", [None])[0]))
         if url.path.startswith("/api/postcards/by-uuid/"):

@@ -229,7 +229,7 @@ function navigate(fragment, { replace = false } = {}) {
 function leavePostcard(keepDetail = false) {
   const { depth = 0, run = 0 } = window.history.state ?? {};
   const steps = keepDetail ? 1 : run + 1;
-  if (fragmentUuid(window.location.hash.slice(1)) && (!keepDetail || run > 0) && steps <= depth) {
+  if (fragmentUuid(window.location.hash.slice(1)) && steps <= depth) {
     window.history.go(-steps);
     return Promise.resolve();
   }
@@ -540,7 +540,7 @@ async function openEdit(uuid) {
   } catch (error) {
     if (request !== routeRequest) return;
     showApiError(error);
-    // A temporary failure returns to the detail page the edit was opened from.
+    // A temporary failure returns to the view the edit was opened from.
     return leavePostcard(error.message !== "postcard not found");
   }
 }
@@ -589,7 +589,7 @@ $("#postcard-form").addEventListener("submit", async (e) => {
     if (id) await api(`/api/postcards/${id}`, { method: "PUT", body: JSON.stringify(data) });
     else await api("/api/postcards", { method: "POST", body: JSON.stringify(data) });
     showMessage("saved");
-    navigate("browse");
+    navigate("browse", { replace: true });
   } catch (err) {
     showApiError(err);
   }
@@ -600,12 +600,16 @@ let deletionPending = false;
 async function deletePostcard(id) {
   if (!id || deletionPending) return;
   deletionPending = true;
+  // Decide where to go from the view the deletion started in: the user may open
+  // another view while the request is running.
+  const fromForm = !$("#view-edit").hidden;
   try {
     if (!await askConfirmation("confirmDelete", "delete")) return;
+    const request = routeRequest;
     await api(`/api/postcards/${id}`, { method: "DELETE" });
     showMessage("deleted");
-    if ($("#view-browse").hidden) await leavePostcard();
-    else await loadList();
+    if (request === routeRequest && fromForm) await leavePostcard();
+    else if (!$("#view-browse").hidden) await loadList();
   } catch (err) {
     showApiError(err);
   } finally {
@@ -618,8 +622,8 @@ $("#delete").addEventListener("click", () =>
 
 $("#cancel").addEventListener("click", () => {
   const id = $("#postcard-form").elements.id.value;
-  return navigate(id && String(currentDetail?.id) === String(id)
-    ? `postcards/${currentDetail.uuid}` : "browse");
+  // Step back instead of pushing a new entry, so Back does not reopen the form.
+  return leavePostcard(Boolean(id) && String(currentDetail?.id) === String(id));
 });
 $("#postcard-form").elements.front_image_path.addEventListener("input", (event) => {
   if (event.target.value.trim()) {

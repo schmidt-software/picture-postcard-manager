@@ -70,6 +70,7 @@ async function runTests() {
   assert.equal(postcardForm.elements.description.value, postcard.description);
   assert.equal(context.window.location.hash, `#postcards/${firstUuid}/edit`);
   await get("cancel").emit("click");
+  await flush(); // Going back routes on popstate.
   assert.equal(context.window.location.hash, `#postcards/${firstUuid}`);
   assert.equal(get("view-detail").hidden, false);
   assert.equal(get("detail-title").textContent, "Postcard #42");

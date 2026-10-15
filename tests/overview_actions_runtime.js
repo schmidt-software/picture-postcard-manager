@@ -184,6 +184,35 @@ async function navigationChecks() {
   assert.equal(hash(), "#browse");
   assert.equal(get("view-browse").hidden, false);
 
+  // A deletion started in the overview must not discard a form opened meanwhile.
+  run('navigate("browse")');
+  await respond(11, ok([card]));
+  const rowRemove = get("postcard-list").children[0].children.at(-1).children[0].children[1];
+  const overviewDeletion = rowRemove.emit("click");
+  get("confirmation").returnValue = "confirm";
+  await get("confirmation").emit("close");
+  await flush();
+  assert.equal(pending[12].options.method, "DELETE");
+  run('navigate("new")');
+  postcardForm.elements.place.value = "Typed";
+  await respond(12, { ok: true, status: 204 });
+  await overviewDeletion;
+  await flush();
+  assert.equal(hash(), "#new");
+  assert.equal(get("view-edit").hidden, false);
+  assert.equal(postcardForm.elements.place.value, "Typed");
+
+  // A failed edit load from the overview leaves no duplicate overview entry.
+  run('navigate("browse")');
+  await respond(13, ok([card]));
+  const overviewIndex = history.index;
+  run(`navigate("postcards/${card.uuid}/edit")`);
+  pending[14].response.reject(new Error("server error"));
+  await flush();
+  await flush();
+  assert.equal(history.index, overviewIndex);
+  assert.equal(hash(), "#browse");
+
   // Without app entries to return to (opened directly), the entry is replaced.
   const direct = setup(null, false, {
     url: `http://127.0.0.1:8000/#postcards/${card.uuid}/edit`,

@@ -98,6 +98,9 @@ When opening a database from an earlier schema, startup adds the six fields (sch
 the `tags` column (schema 2) and the `uuid` column (schema 4) as needed, merges the
 legacy `title` and `notes` columns into `description` and drops them (schema 5),
 all in one transaction, and advances the SQLite `user_version`.
+The legacy columns are removed via a table rebuild (new v5 table, rows copied,
+old table dropped, new one renamed), which works on every SQLite version
+(`ALTER TABLE ... DROP COLUMN` would require SQLite 3.35+).
 Existing IDs, timestamps, indexes on remaining columns and unrelated data are
 preserved; indexes on the dropped legacy columns are removed with them.
 Migrated records without a front image remain available in browse and search;

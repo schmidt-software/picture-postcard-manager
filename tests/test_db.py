@@ -158,6 +158,86 @@ class DatabaseTest(unittest.TestCase):
                 self.assertNotIn("title", columns)
                 self.assertNotIn("notes", columns)
 
+    def test_legacy_migration_rebuilds_table_without_drop_column(self):
+        """The schema-5 migration uses the table rebuild on every SQLite version.
+
+        ``ALTER TABLE ... DROP COLUMN`` requires SQLite >= 3.35, so the
+        migration must never emit it. The rebuild must preserve ids, uuids,
+        timestamps, tags and all data, recreate the uuid index, and keep the
+        AUTOINCREMENT sequence so deleted ids are not reused.
+        """
+        class NoDropColumnConnection(sqlite3.Connection):
+            def execute(self, sql, parameters=()):
+                if "DROP COLUMN" in sql.upper():
+                    raise AssertionError(f"DROP COLUMN must not be used: {sql}")
+                return super().execute(sql, parameters)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "v4.db"
+            with closing(sqlite3.connect(path)) as conn, conn:
+                conn.executescript("""
+                    CREATE TABLE postcards (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        uuid TEXT NOT NULL,
+                        title TEXT NOT NULL DEFAULT '',
+                        notes TEXT NOT NULL DEFAULT '',
+                        front_image_path TEXT NOT NULL DEFAULT '',
+                        back_image_path TEXT NOT NULL DEFAULT '',
+                        place TEXT NOT NULL DEFAULT '',
+                        region TEXT NOT NULL DEFAULT '',
+                        year TEXT NOT NULL DEFAULT '',
+                        description TEXT NOT NULL DEFAULT '',
+                        tags TEXT NOT NULL DEFAULT '[]',
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
+                    CREATE UNIQUE INDEX postcards_uuid ON postcards(uuid);
+                    PRAGMA user_version = 4;
+                """)
+                conn.execute(
+                    "INSERT INTO postcards (id, uuid, title, notes, front_image_path, place,"
+                    " tags, created_at, updated_at) VALUES (7, 'b962a358-8899-4000-8999-"
+                    "6973bac5d597', 'T', 'N', '/front.jpg', 'Wien', '[\"alt\"]', 'c7', 'u7')"
+                )
+                conn.execute(
+                    "INSERT INTO postcards (id, uuid, front_image_path, created_at, updated_at)"
+                    " VALUES (9, 'b962a358-8899-4000-8999-6973bac5d599', '/f.jpg', 'c9', 'u9')"
+                )
+                conn.execute("DELETE FROM postcards WHERE id = 9")
+
+            real_connect = sqlite3.connect
+
+            def connect(*args, **kwargs):
+                kwargs["factory"] = NoDropColumnConnection
+                return real_connect(*args, **kwargs)
+
+            with patch("app.db.sqlite3.connect", side_effect=connect):
+                db = Database(path)
+                self.addCleanup(db.close)
+                record = db.get(7)
+                self.assertEqual(record["description"], "T\n\nN")
+                self.assertEqual(record["uuid"], "b962a358-8899-4000-8999-6973bac5d597")
+                self.assertEqual(record["place"], "Wien")
+                self.assertEqual(record["tags"], ["alt"])
+                self.assertEqual(record["created_at"], "c7")
+                self.assertEqual(record["updated_at"], "u7")
+                # Deleted ids are not reused after the rebuild.
+                self.assertGreater(db.create({"front_image_path": "/new.jpg"})["id"], 9)
+            with closing(sqlite3.connect(path)) as conn, conn:
+                columns = [row[1] for row in conn.execute("PRAGMA table_info(postcards)")]
+                self.assertNotIn("title", columns)
+                self.assertNotIn("notes", columns)
+                # The unique uuid index survives the rebuild.
+                self.assertIsNotNone(conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'index'"
+                    " AND name = 'postcards_uuid'"
+                ).fetchone())
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        "INSERT INTO postcards (uuid, front_image_path, created_at, updated_at)"
+                        " VALUES ('b962a358-8899-4000-8999-6973bac5d597', '/x.jpg', 'c', 'u')"
+                    )
+
     def test_failed_migration_rolls_back_all_schema_changes(self):
         class FailingConnection(sqlite3.Connection):
             def execute(self, sql, parameters=()):

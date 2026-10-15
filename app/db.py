@@ -24,8 +24,8 @@ TEXT_FIELDS = POSTCARD_FIELDS
 EDITABLE_FIELDS = (*TEXT_FIELDS, "tags")
 RECORD_FIELDS = (*EDITABLE_FIELDS, "id", "uuid", "created_at", "updated_at")
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS postcards (
+SCHEMA_TEMPLATE = """
+CREATE TABLE IF NOT EXISTS {table} (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     uuid        TEXT NOT NULL,
     front_image_path TEXT NOT NULL DEFAULT '',
@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS postcards (
     updated_at  TEXT NOT NULL
 );
 """
+SCHEMA = SCHEMA_TEMPLATE.format(table="postcards")
 
 
 def _now():
@@ -200,10 +201,14 @@ class Database:
     def _drop_legacy_columns(self, conn, columns):
         """Schema 5: merge legacy title/notes into description, then drop them.
 
-        Runs on the explicit migration connection, inside the startup
-        migration transaction, so a failure rolls everything back. Indexes
-        that reference a dropped column are removed as well; SQLite cannot
-        drop an indexed column otherwise.
+        SQLite only supports ``ALTER TABLE ... DROP COLUMN`` from version
+        3.35, so the table is always rebuilt instead (one code path for all
+        SQLite versions): a new table with the v5 schema is created, all rows
+        are copied with their ids, uuids, timestamps and tags, the old table
+        is dropped, the new one is renamed, and indexes that do not reference
+        a legacy column are recreated. Runs on the explicit migration
+        connection, inside the startup migration transaction, so a failure
+        rolls everything back.
         """
         legacy = [field for field in LEGACY_FIELDS if field in columns]
         if not legacy:
@@ -220,6 +225,7 @@ class Database:
                     "UPDATE postcards SET description = ? WHERE id = ?",
                     (merged, row["id"]),
                 )
+        surviving_index_sql = []
         for index in conn.execute("PRAGMA index_list(postcards)").fetchall():
             name = index["name"]
             if name.startswith("sqlite_autoindex"):
@@ -229,9 +235,48 @@ class Database:
                 for info in conn.execute(f'PRAGMA index_info("{name}")')
             ]
             if any(field in indexed for field in legacy):
-                conn.execute(f'DROP INDEX "{name}"')
-        for field in legacy:
-            conn.execute(f"ALTER TABLE postcards DROP COLUMN {field}")
+                continue
+            sql = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+                (name,),
+            ).fetchone()
+            if sql and sql["sql"]:
+                surviving_index_sql.append(sql["sql"])
+        old_seq = None
+        if conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'"
+        ).fetchone():
+            row = conn.execute(
+                "SELECT seq FROM sqlite_sequence WHERE name = 'postcards'"
+            ).fetchone()
+            old_seq = row["seq"] if row else None
+        conn.execute(SCHEMA_TEMPLATE.format(table="postcards_migrated"))
+        copied = ", ".join(
+            ("id", "uuid", *POSTCARD_FIELDS, "tags", "created_at", "updated_at")
+        )
+        conn.execute(
+            f"INSERT INTO postcards_migrated ({copied}) SELECT {copied} FROM postcards"
+        )
+        conn.execute("DROP TABLE postcards")
+        conn.execute("ALTER TABLE postcards_migrated RENAME TO postcards")
+        for sql in surviving_index_sql:
+            conn.execute(sql)
+        if old_seq is not None:
+            # Keep the AUTOINCREMENT high-water mark so ids of previously
+            # deleted rows are not reused after the rebuild.
+            row = conn.execute(
+                "SELECT seq FROM sqlite_sequence WHERE name = 'postcards'"
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO sqlite_sequence (name, seq) VALUES ('postcards', ?)",
+                    (old_seq,),
+                )
+            elif row["seq"] < old_seq:
+                conn.execute(
+                    "UPDATE sqlite_sequence SET seq = ? WHERE name = 'postcards'",
+                    (old_seq,),
+                )
 
     @staticmethod
     def _clean(data):

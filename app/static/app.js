@@ -841,11 +841,24 @@ function groupBulkFiles(files) {
   return [...groups, ...singles];
 }
 
+// Client-side validation failures carry a translation key so the per-file
+// result list stays localized; server errors keep their raw text and are
+// mapped through formatApiError() like everywhere else in the UI.
+function bulkValidationError(key) {
+  const error = new Error(key);
+  error.i18nKey = key;
+  return error;
+}
+
+function bulkErrorDetail(error) {
+  return error?.i18nKey ? translate(error.i18nKey) : formatApiError(error?.message || "");
+}
+
 async function uploadBulkImage(file) {
-  if (!file.size) throw new Error("image upload must not be empty");
-  if (file.size > MAX_IMAGE_BYTES) throw new Error("image is too large (maximum 20 MiB)");
+  if (!file.size) throw bulkValidationError("errorImageEmpty");
+  if (file.size > MAX_IMAGE_BYTES) throw bulkValidationError("errorImageTooLarge");
   if (!IMAGE_TYPES.includes(file.type)) {
-    throw new Error("unsupported image type; use PNG, JPEG, GIF or WebP");
+    throw bulkValidationError("errorUnsupportedImageType");
   }
   const result = await api("/api/images", {
     method: "POST", headers: { "Content-Type": file.type }, body: file,
@@ -867,7 +880,7 @@ async function runBulkImport(files) {
   let created = 0;
   for (const group of groupBulkFiles(files)) {
     if (!group.front) {
-      results.push({ key: "bulkFailed", params: {
+      results.push({ key: "bulkFailed", failed: true, params: {
         name: group.back.name, detail: translate("bulkBackWithoutFront") } });
       continue;
     }
@@ -879,7 +892,7 @@ async function runBulkImport(files) {
         try {
           data.back_image_path = await uploadBulkImage(group.back);
         } catch (err) {
-          backFailure = err?.message || "";
+          backFailure = err ?? new Error("");
         }
       }
       const postcard = await api("/api/postcards", {
@@ -894,11 +907,11 @@ async function runBulkImport(files) {
       }
       if (backFailure !== null) {
         results.push({ key: "bulkFailed", failed: true, params: {
-          name: group.back.name, detail: formatApiError(backFailure) } });
+          name: group.back.name, detail: bulkErrorDetail(backFailure) } });
       }
     } catch (err) {
       results.push({ key: "bulkFailed", failed: true, params: {
-        name: group.front.name, detail: formatApiError(err?.message || "") } });
+        name: group.front.name, detail: bulkErrorDetail(err) } });
     }
   }
   return { results, created, failed: results.filter((r) => r.failed).length };

@@ -503,6 +503,7 @@ async function loadList(append = false) {
     listComplete = items.length < PAGE_SIZE;
     renderList();
   } catch (err) {
+    if (request !== listRequest) return;
     showApiError(err);
   }
 }

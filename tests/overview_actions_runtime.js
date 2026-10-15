@@ -125,6 +125,12 @@ async function navigationChecks() {
   // Before the first list response the overview must not claim to be empty.
   assert.equal(get("empty-hint").hidden, true);
   context.fetch = (url, options = {}) => {
+    // Filter dropdown values load alongside the overview list; answer them
+    // directly so the indexed responses below keep addressing the list,
+    // detail and delete requests.
+    if (url === "/api/postcards/filters") {
+      return Promise.resolve(ok({ place: [], region: [], year: [], tag: [] }));
+    }
     const response = deferred();
     pending.push({ url, options, response });
     return response.promise;

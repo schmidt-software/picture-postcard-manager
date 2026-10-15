@@ -36,6 +36,21 @@
         <button type="button" id="sort-direction" data-i18n="sortAscending"
                 aria-pressed="false" hidden>Ascending</button>
       </div>
+      <div class="filter-controls">
+        <label><span data-i18n="place">Place</span>
+          <select id="filter-place" data-filter="place"></select>
+        </label>
+        <label><span data-i18n="region">Region</span>
+          <select id="filter-region" data-filter="region"></select>
+        </label>
+        <label><span data-i18n="year">Year</span>
+          <select id="filter-year" data-filter="year"></select>
+        </label>
+        <label><span data-i18n="tag">Tag</span>
+          <select id="filter-tag" data-filter="tag"></select>
+        </label>
+        <button type="button" id="filter-reset" data-i18n="resetFilters" hidden>Reset filters</button>
+      </div>
       <div class="table-wrap">
         <table>
           <thead><tr>

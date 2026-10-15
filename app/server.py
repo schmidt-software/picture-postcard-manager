@@ -159,10 +159,13 @@ class Handler(BaseHTTPRequestHandler):
                 )
             return self._send_json(HTTPStatus.OK, {"status": "ok"})
         if url.path == "/api/postcards":
+            filters = {name: params[name][0]
+                       for name in ("place", "region", "year", "tag") if name in params}
             try:
                 limit, offset = self._page_params(params)
                 items = self.db.list(
                     params.get("q", [None])[0],
+                    filters=filters,
                     sort=params.get("sort", [None])[0],
                     direction=params.get("dir", ["asc"])[0],
                     limit=limit, offset=offset,
@@ -170,6 +173,8 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 return self._error(HTTPStatus.BAD_REQUEST, str(exc))
             return self._send_json(HTTPStatus.OK, items)
+        if url.path == "/api/postcards/filters":
+            return self._send_json(HTTPStatus.OK, self.db.filter_values())
         if url.path.startswith("/api/postcards/by-uuid/"):
             value = url.path[len("/api/postcards/by-uuid/"):]
             try:

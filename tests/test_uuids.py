@@ -46,7 +46,7 @@ class UuidTest(unittest.TestCase):
     def test_restore_keeps_links_append_generates_new_identifiers(self):
         original = self.create()
         export = self.db.export_data()
-        self.assertEqual(export["schema_version"], 4)
+        self.assertEqual(export["schema_version"], 5)
         self.db.import_data(export, "replace")
         self.assertEqual(self.db.get_by_uuid(original["uuid"]), original)
         self.db.import_data(export, "append")

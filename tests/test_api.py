@@ -36,7 +36,6 @@ class ApiTest(unittest.TestCase):
 
     def test_crud(self):
         data = {
-            "title": "Berlin", "notes": "Legacy notes",
             "front_image_path": "images/berlin-front.jpg",
             "back_image_path": "images/berlin-back.jpg",
             "place": "Berlin", "region": "Brandenburg", "year": "1910",
@@ -46,16 +45,18 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(status, 201)
         for key, value in data.items():
             self.assertEqual(created[key], value)
+        self.assertNotIn("title", created)
+        self.assertNotIn("notes", created)
         pid = created["id"]
 
         status, items = self.request("GET", "/api/postcards")
-        self.assertEqual([p["title"] for p in items], ["Berlin"])
+        self.assertEqual([p["place"] for p in items], ["Berlin"])
 
-        status, updated = self.request("PUT", f"/api/postcards/{pid}", {"title": "Munich"})
+        status, updated = self.request("PUT", f"/api/postcards/{pid}", {"place": "Munich"})
         self.assertEqual(status, 200)
-        self.assertEqual(updated["title"], "Munich")
+        self.assertEqual(updated["place"], "Munich")
         for key, value in data.items():
-            if key != "title":
+            if key != "place":
                 self.assertEqual(updated[key], value)
         self.assertEqual(updated["created_at"], created["created_at"])
 
@@ -74,7 +75,7 @@ class ApiTest(unittest.TestCase):
 
     def test_export_import_roundtrip(self):
         data = {
-            "title": "A", "notes": "Legacy notes", "front_image_path": "/front.jpg",
+            "front_image_path": "/front.jpg",
             "back_image_path": "/back.jpg", "place": "Berlin", "region": "Berlin",
             "year": "1900", "description": "A historic view",
         }
@@ -82,8 +83,11 @@ class ApiTest(unittest.TestCase):
         self.request("POST", "/api/postcards", {"front_image_path": "/b.jpg"})
         _, export = self.request("GET", "/api/export")
         self.assertEqual(export["format"], "picture-postcard-manager")
-        self.assertEqual(export["schema_version"], 4)
+        self.assertEqual(export["schema_version"], 5)
         self.assertEqual(len(export["postcards"]), 2)
+        for postcard in export["postcards"]:
+            self.assertNotIn("title", postcard)
+            self.assertNotIn("notes", postcard)
 
         status, result = self.request("POST", "/api/import?mode=append", export)
         self.assertEqual((status, result["imported"]), (200, 2))
@@ -203,7 +207,9 @@ class ApiTest(unittest.TestCase):
         status, _ = self.request("POST", "/api/import?mode=replace", payload)
         self.assertEqual(status, 200)
         _, legacy = self.request("GET", "/api/postcards/7")
-        self.assertEqual(legacy["notes"], "Keep me")
+        self.assertEqual(legacy["description"], "Legacy\n\nKeep me")
+        self.assertNotIn("title", legacy)
+        self.assertNotIn("notes", legacy)
         self.assertEqual(legacy["front_image_path"], "")
         status, body = self.request("PUT", "/api/postcards/7", {"place": "Berlin"})
         self.assertEqual(status, 400)
@@ -213,7 +219,44 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.request("GET", "/api/postcards/7")[1], legacy)
         status, repaired = self.request("PUT", "/api/postcards/7", {"front_image_path": "/legacy.jpg"})
         self.assertEqual(status, 200)
-        self.assertEqual(repaired["title"], "Legacy")
+        self.assertEqual(repaired["description"], "Legacy\n\nKeep me")
+
+    def test_v4_import_merges_legacy_fields(self):
+        """Version-4 exports with title/notes import into description."""
+        payload = {
+            "format": "picture-postcard-manager", "schema_version": 4,
+            "postcards": [
+                {"id": 1, "uuid": "b962a358-8899-4000-8999-6973bac5d591",
+                 "title": "Berlin", "notes": "From grandma",
+                 "front_image_path": "/front.jpg", "back_image_path": "",
+                 "place": "Berlin", "region": "", "year": "1910",
+                 "description": "Street view", "tags": ["old"],
+                 "created_at": "c", "updated_at": "u"},
+                {"id": 2, "uuid": "b962a358-8899-4000-8999-6973bac5d592",
+                 "title": "", "notes": "", "front_image_path": "/plain.jpg",
+                 "back_image_path": "", "place": "", "region": "", "year": "",
+                 "description": "Only description", "tags": [],
+                 "created_at": "c", "updated_at": "u"},
+            ],
+        }
+        status, result = self.request("POST", "/api/import?mode=replace", payload)
+        self.assertEqual((status, result["imported"]), (200, 2))
+        _, merged = self.request("GET", "/api/postcards/1")
+        self.assertEqual(merged["description"], "Berlin\n\nFrom grandma\n\nStreet view")
+        self.assertEqual(merged["tags"], ["old"])
+        self.assertNotIn("title", merged)
+        self.assertNotIn("notes", merged)
+        _, plain = self.request("GET", "/api/postcards/2")
+        self.assertEqual(plain["description"], "Only description")
+
+    def test_v5_import_rejects_legacy_fields(self):
+        _, created = self.request("POST", "/api/postcards", {"front_image_path": "/keep.jpg"})
+        _, export = self.request("GET", "/api/export")
+        payload = dict(export, postcards=[dict(export["postcards"][0], title="No more")])
+        status, body = self.request("POST", "/api/import?mode=replace", payload)
+        self.assertEqual(status, 400)
+        self.assertIn("title", body["error"])
+        self.assertEqual(self.request("GET", "/api/postcards")[1], [created])
 
     def test_append_import_rolls_back_on_error(self):
         _, created = self.request("POST", "/api/postcards", {"front_image_path": "/existing.jpg"})

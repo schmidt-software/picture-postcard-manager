@@ -3,7 +3,8 @@
 Lists or deletes generated image files in the image directory that no postcard
 references. Only files with generated upload names (32 hex characters plus a
 known extension) directly inside the image directory are considered; any file
-whose name appears in a stored front or back image path is kept. Run with:
+whose name appears in a stored front or back image path is kept, also when the
+path carries a query or fragment or is a full URL. Run with:
 
     python3 -m app.cleanup [--delete] [--db PATH] [--image-dir PATH]
 
@@ -14,6 +15,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from app.db import Database
 from app.images import NAME_PATTERN
@@ -23,7 +25,13 @@ def referenced_names(postcards):
     """Return the set of generated file names referenced by any postcard.
 
     A file is referenced when its name is the final path segment of a stored
-    front or back image path, regardless of how the path was entered.
+    front or back image path, regardless of how the path was entered. Stored
+    values may be plain file paths, server paths with a query or fragment
+    (``/images/<name>.png?v=1``), or full URLs; query strings, fragments and
+    percent-encoding are ignored when extracting the name. Matching stays
+    deliberately generous: every candidate interpretation of a value counts
+    as a reference, so an ambiguous path keeps a file rather than orphaning
+    it.
     """
     names = set()
     for postcard in postcards:
@@ -31,9 +39,16 @@ def referenced_names(postcards):
             value = (postcard.get(field) or "").strip()
             if not value:
                 continue
-            name = value.replace("\\", "/").rsplit("/", 1)[-1]
-            if NAME_PATTERN.fullmatch(name):
-                names.add(name)
+            # Consider the raw value, its URL path component (drops ?query
+            # and #fragment, also for full http://host/... URLs), and the
+            # percent-decoded form of each. Every match counts, which keeps
+            # cleanup conservative for ambiguous values.
+            candidates = {value, urlsplit(value).path}
+            candidates.update({unquote(c) for c in set(candidates)})
+            for candidate in candidates:
+                name = candidate.replace("\\", "/").rsplit("/", 1)[-1]
+                if NAME_PATTERN.fullmatch(name):
+                    names.add(name)
     return names
 
 

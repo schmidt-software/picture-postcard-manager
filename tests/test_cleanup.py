@@ -47,6 +47,33 @@ class CleanupTest(unittest.TestCase):
         self.assertEqual(referenced_names(postcards),
                          {GENERATED_A, GENERATED_B, GENERATED_C})
 
+    def test_referenced_names_ignores_query_fragment_and_url_forms(self):
+        postcards = [
+            {"front_image_path": f"/images/{GENERATED_A}?v=1", "back_image_path": ""},
+            {"front_image_path": f"/images/{GENERATED_B}#frag", "back_image_path": ""},
+            {"front_image_path": f"http://localhost:8000/images/{GENERATED_C}?v=2#top",
+             "back_image_path": ""},
+        ]
+        self.assertEqual(referenced_names(postcards),
+                         {GENERATED_A, GENERATED_B, GENERATED_C})
+
+    def test_referenced_names_handles_percent_encoding(self):
+        encoded = "/images/" + GENERATED_A.replace(".png", "%2epng")
+        postcards = [{"front_image_path": encoded, "back_image_path": ""}]
+        self.assertEqual(referenced_names(postcards), {GENERATED_A})
+
+    def test_files_referenced_with_query_or_fragment_are_never_deleted(self):
+        (self.image_dir / GENERATED_A).write_bytes(PNG)
+        (self.image_dir / GENERATED_B).write_bytes(PNG)
+        (self.image_dir / GENERATED_C).write_bytes(PNG)
+        self.add_postcard(f"/images/{GENERATED_A}?v=1",
+                          back=f"/images/{GENERATED_B}#frag")
+        self.add_postcard(f"http://localhost:8000/images/{GENERATED_C}?v=2")
+        orphans, _ = self.run_cleanup(delete=True)
+        self.assertEqual(orphans, [])
+        for name in (GENERATED_A, GENERATED_B, GENERATED_C):
+            self.assertTrue((self.image_dir / name).exists())
+
     def test_orphans_are_listed_but_kept_without_delete(self):
         (self.image_dir / GENERATED_A).write_bytes(PNG)
         (self.image_dir / GENERATED_B).write_bytes(PNG)

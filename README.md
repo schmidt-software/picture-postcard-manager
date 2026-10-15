@@ -143,7 +143,10 @@ Safety rules:
 - Only files with generated upload names (32 hex characters plus `.png`, `.jpg`,
   `.gif` or `.webp`) directly inside the image directory are considered.
 - A file is kept when its name appears as the last segment of any postcard's
-  front or back image path, however the path was entered.
+  front or back image path, however the path was entered — including URLs with
+  a query or fragment (`/images/<name>.png?v=1`), percent-encoded names and
+  full URLs (`http://host/images/<name>.png`). When a value is ambiguous, the
+  file is kept.
 - Manually added files, other filenames, subdirectories and symlinks are never
   touched. JSON export/import and backups are unaffected; exports reference
   images by path only.

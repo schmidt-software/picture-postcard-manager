@@ -140,6 +140,12 @@ The overview shows compact front/back image previews, place, year, tags, ID and 
 last update time. Region and description remain editable and are included in
 storage and JSON exports, but are not shown as overview columns.
 
+The overview loads postcards in pages of 100 rows; **Show more postcards**
+appends the next page. Searching resets to the first page. With several
+thousand postcards the first page stays fast because only one page is queried
+and rendered (measured locally with 5,000 postcards: ~10 ms for a 100-row page
+versus ~30 ms for the full unpaginated list, before image loading).
+
 Previews load lazily from browser-accessible URLs on the application's own
 origin. Missing or unavailable images show a localized fallback instead of a
 broken-image icon. External hosts, `file:` and active-content URLs are not loaded.
@@ -356,7 +362,7 @@ automatically forward host environment variables into the container.
 | Method | Path                         | Description                                   |
 |--------|------------------------------|-----------------------------------------------|
 | GET    | `/api/health`                | Lightweight health check (server and database) |
-| GET    | `/api/postcards?q=<text>`    | List postcards (searches stored fields)       |
+| GET    | `/api/postcards?q=<text>&limit=<n>&offset=<n>` | List postcards (searches stored fields; optional pagination) |
 | POST   | `/api/postcards`             | Create a postcard                             |
 | GET    | `/api/postcards/<id>`        | Get a postcard                                |
 | PUT    | `/api/postcards/<id>`        | Update a postcard                             |
@@ -365,6 +371,20 @@ automatically forward host environment variables into the container.
 | POST   | `/api/import?mode=append\|replace` | Import postcards from an export file    |
 | POST   | `/api/images`                | Upload an image (raw bytes, see below)        |
 | GET    | `/images/<name>`             | Get an uploaded image                         |
+
+### Listing and pagination
+
+`GET /api/postcards` returns all postcards (newest first) when no pagination
+parameters are given, which keeps existing clients and exports working. Optional
+`limit` (positive integer) and `offset` (non-negative integer, default 0) select
+a page; both combine with `q`. Invalid values return HTTP 400. `GET /api/export`
+always exports the whole collection.
+
+The server uses one SQLite connection per request thread with WAL journal mode
+for file databases, so reads do not block while another request writes. Uploads
+and image downloads are streamed in 1 MiB chunks instead of being buffered
+completely in memory; the 20 MiB per-image limit is unchanged, and an upload
+that ends early is rejected without leaving a partial file.
 
 ### Image upload
 

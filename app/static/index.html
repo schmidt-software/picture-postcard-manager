@@ -136,6 +136,19 @@
         <label><input type="radio" name="mode" value="replace"><span data-i18n="replacePostcards">Replace all existing postcards</span></label>
         <button type="submit" data-i18n="import">Import</button>
       </form>
+      <h2 data-i18n="bulkImport">Bulk image import</h2>
+      <p data-i18n="bulkImportHint">Select several images to create one postcard per image. Files named …-front and …-back with the same base name become one postcard.</p>
+      <form id="bulk-form" novalidate>
+        <input type="file" id="bulk-files" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
+        <div class="file-picker">
+          <button type="button" id="choose-bulk-files" data-i18n="chooseImages" aria-describedby="bulk-file-count bulk-error">Choose images</button>
+          <span id="bulk-file-count" aria-live="polite"></span>
+        </div>
+        <p id="bulk-error" class="validation-error" role="alert" hidden></p>
+        <button type="submit" id="bulk-start" data-i18n="bulkStart">Create postcards</button>
+      </form>
+      <p id="bulk-summary" role="status" aria-live="polite" hidden></p>
+      <ul id="bulk-results"></ul>
     </section>
   </main>
 

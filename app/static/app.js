@@ -739,7 +739,12 @@ async function deletePostcard(id) {
     await api(`/api/postcards/${id}`, { method: "DELETE" });
     showMessage("deleted");
     if (request === routeRequest && fromForm) await leavePostcard();
-    else if (!$("#view-browse").hidden) await loadList();
+    else if (!$("#view-browse").hidden) {
+      // The deleted postcard may have carried the last use of a filter value,
+      // so the dropdowns are reloaded along with the list. An active selection
+      // stays selectable (see renderFilterOptions), showing an empty result.
+      await Promise.all([loadFilterOptions(), loadList()]);
+    }
   } catch (err) {
     showApiError(err);
   } finally {

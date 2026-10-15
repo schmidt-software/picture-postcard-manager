@@ -207,8 +207,12 @@ Filters combine with each other, with the search box, with sorting and with
 pagination
 (**Show more postcards** continues the filtered, sorted list), and **Reset filters**
 clears them all. The selection is stored in the browser's local storage and
-restored on reload, like the interface language. A restored value that no
-postcard offers anymore remains selectable until it is changed or reset.
+restored on reload, like the interface language. The dropdowns refresh
+whenever the collection changes — after saving, deleting (also directly in
+the overview), or importing — so they always list only existing values. A
+selected or restored value that no postcard offers anymore (for example
+because its last postcard was just deleted) remains selectable and simply
+yields an empty result until it is changed or reset.
 
 The REST API accepts the same filters as exact-match query parameters on
 `GET /api/postcards` (`place`, `region`, `year`, `tag`), combinable with `q`,

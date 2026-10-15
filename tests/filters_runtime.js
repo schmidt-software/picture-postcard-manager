@@ -78,6 +78,7 @@ async function runTests() {
   await combinationTests();
   await raceTests();
   await runRaceTests();
+  await refreshTests();
 
   console.log("Filter runtime checks passed.");
 }
@@ -270,6 +271,109 @@ async function runRaceTests() {
   await oldOptions;
   const options = get("filter-place").children.map((option) => option.textContent);
   assert.deepEqual(options.slice(1), ["Current"], "stale response rebuilt the dropdowns");
+}
+
+// Every change to the collection must refresh the filter dropdowns, not only
+// the list: a value whose last postcard disappears is removed as an option.
+async function refreshTests() {
+  const ui = setup();
+  const { run, get, context, requests, postcardForm, importForm } = ui;
+  const flush = () => new Promise(setImmediate);
+  const uuid = "b962a358-8899-4000-8999-6973bac5d599";
+  let options = { place: ["Berlin", "Munich"], region: [], year: [], tag: [] };
+  context.fetch = async (url, opts = {}) => {
+    requests.push({ url, options: opts });
+    if (opts.method === "DELETE") {
+      options = { ...options, place: options.place.filter((p) => p !== "Berlin") };
+      return { ok: true, status: 204 };
+    }
+    if (opts.method === "POST" && url.startsWith("/api/import")) {
+      options = { ...options, place: [...options.place, "Imported"] };
+      return { ok: true, status: 200, json: async () => ({ imported: 1 }) };
+    }
+    if (opts.method === "POST") {
+      options = { ...options, place: [...options.place, "Vienna"] };
+      return { ok: true, status: 200, json: async () => ({ id: 9 }) };
+    }
+    return {
+      ok: true, status: 200,
+      json: async () => {
+        if (url === "/api/postcards/filters") return options;
+        if (url.includes("by-uuid")) return { id: 2, uuid, front_image_path: "/a.png" };
+        return [];
+      },
+    };
+  };
+  const placeOptions = () =>
+    get("filter-place").children.map((option) => option.textContent).slice(1);
+  const dialog = get("confirmation");
+  const confirmPending = async (pending) => {
+    dialog.returnValue = "confirm";
+    await dialog.emit("close");
+    await pending;
+    await flush();
+  };
+
+  await run('showView("browse")');
+  await flush();
+  assert.deepEqual(placeOptions(), ["Berlin", "Munich"]);
+
+  // Deleting directly in the overview reloads the dropdowns: the deleted
+  // postcard may have carried the last use of a value.
+  requests.length = 0;
+  await confirmPending(run("deletePostcard(1)"));
+  assert.ok(requests.some((request) => request.url === "/api/postcards/filters"),
+    "deleting in the overview must reload the filter options");
+  assert.deepEqual(placeOptions(), ["Munich"], "deleted value must leave the dropdown");
+
+  // A selected value whose last postcard is deleted stays selectable with an
+  // empty result (same rule as a restored value) instead of breaking the select.
+  options = { ...options, place: ["Berlin", "Munich"] };
+  await run('showView("browse")');
+  await flush();
+  get("filter-place").value = "Berlin";
+  await get("filter-place").emit("change");
+  await confirmPending(run("deletePostcard(1)"));
+  assert.equal(get("filter-place").value, "Berlin", "selection must survive the refresh");
+  assert.deepEqual(placeOptions(), ["Berlin", "Munich"]);
+  assert.equal(get("filter-reset").hidden, false);
+  assert.ok(requests.at(-1).url.includes("place=Berlin"), requests.at(-1).url);
+  await get("filter-reset").emit("click");
+
+  // Deleting from the edit form returns to the overview, which reloads the
+  // dropdowns on entry.
+  context.window.location.hash = `#postcards/${uuid}/edit`;
+  await run("route()");
+  await flush();
+  assert.equal(get("view-edit").hidden, false);
+  requests.length = 0;
+  await confirmPending(run("deletePostcard(2)"));
+  assert.ok(requests.some((request) => request.url === "/api/postcards/filters"),
+    "deleting from the edit form must reload the filter options");
+  assert.deepEqual(placeOptions(), ["Munich"]);
+
+  // Saving returns to the overview, which reloads the dropdowns on entry.
+  options = { ...options, place: ["Munich"] };
+  await run('openForm()');
+  postcardForm.elements.front_image_path.value = "/f.jpg";
+  requests.length = 0;
+  await postcardForm.emit("submit");
+  await flush();
+  assert.ok(requests.some((request) => request.url === "/api/postcards/filters"),
+    "saving must reload the filter options");
+  assert.deepEqual(placeOptions(), ["Munich", "Vienna"], "saved value must appear");
+
+  // After an import, returning to the overview reloads the dropdowns.
+  await run('navigate("data")');
+  importForm.elements.file.files = [{ name: "import.json", text: async () => "[]" }];
+  await importForm.emit("submit");
+  await flush();
+  requests.length = 0;
+  await run('navigate("browse")');
+  await flush();
+  assert.ok(requests.some((request) => request.url === "/api/postcards/filters"),
+    "returning to the overview after an import must reload the filter options");
+  assert.ok(placeOptions().includes("Imported"), "imported value must appear");
 }
 
 runTests().catch((error) => {

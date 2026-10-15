@@ -24,6 +24,18 @@
     <section id="view-browse" class="view">
       <input type="search" id="search" placeholder="Search…" data-i18n-placeholder="search"
              aria-label="Search…" data-i18n-aria-label="search">
+      <div class="sort-controls">
+        <label for="sort-select" data-i18n="sortBy">Sort by</label>
+        <select id="sort-select">
+          <option value="" data-i18n="sortNewest">Newest first</option>
+          <option value="place" data-i18n="place">Place</option>
+          <option value="region" data-i18n="region">Region</option>
+          <option value="year" data-i18n="year">Year</option>
+          <option value="updated" data-i18n="updated">Updated</option>
+        </select>
+        <button type="button" id="sort-direction" data-i18n="sortAscending"
+                aria-pressed="false" hidden>Ascending</button>
+      </div>
       <div class="table-wrap">
         <table>
           <thead><tr>

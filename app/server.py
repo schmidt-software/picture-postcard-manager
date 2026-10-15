@@ -161,7 +161,12 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/api/postcards":
             try:
                 limit, offset = self._page_params(params)
-                items = self.db.list(params.get("q", [None])[0], limit=limit, offset=offset)
+                items = self.db.list(
+                    params.get("q", [None])[0],
+                    sort=params.get("sort", [None])[0],
+                    direction=params.get("dir", ["asc"])[0],
+                    limit=limit, offset=offset,
+                )
             except ValueError as exc:
                 return self._error(HTTPStatus.BAD_REQUEST, str(exc))
             return self._send_json(HTTPStatus.OK, items)

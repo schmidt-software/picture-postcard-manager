@@ -7,6 +7,7 @@ would create a separate empty database.
 """
 
 import json
+import re
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -23,6 +24,9 @@ LEGACY_FIELDS = ("title", "notes")
 TEXT_FIELDS = POSTCARD_FIELDS
 EDITABLE_FIELDS = (*TEXT_FIELDS, "tags")
 RECORD_FIELDS = (*EDITABLE_FIELDS, "id", "uuid", "created_at", "updated_at")
+# User-selectable overview sort keys -> record fields.
+SORT_FIELDS = {"place": "place", "region": "region", "year": "year",
+               "updated": "updated_at"}
 
 SCHEMA_TEMPLATE = """
 CREATE TABLE IF NOT EXISTS {table} (
@@ -81,6 +85,31 @@ def merge_legacy_fields(title, notes, description):
         leading = len(piece) - len(piece.lstrip("\n"))
         merged += "\n" * max(0, 2 - trailing - leading) + piece
     return merged
+
+
+_YEAR_NUMBER = re.compile(r"\d{1,4}")
+
+
+def _sorted_rows(rows, sort, direction):
+    """Sort rows by a SORT_FIELDS key; rows without a value always come last.
+
+    Free-text years sort by their first number ("ca. 1910" and "1910-1920"
+    sort as 1910); years without a number sort after numbered years by text.
+    Ties keep the incoming order (newest first).
+    """
+    field = SORT_FIELDS[sort]
+    reverse = direction == "desc"
+    empty = [row for row in rows if not (row[field] or "").strip()]
+    present = [row for row in rows if (row[field] or "").strip()]
+    if sort == "year":
+        numeric = [row for row in present if _YEAR_NUMBER.search(row[field])]
+        textual = [row for row in present if not _YEAR_NUMBER.search(row[field])]
+        numeric.sort(key=lambda row: (int(_YEAR_NUMBER.search(row[field]).group()),
+                                      row[field].casefold()), reverse=reverse)
+        textual.sort(key=lambda row: row[field].casefold(), reverse=reverse)
+        return numeric + textual + empty
+    present.sort(key=lambda row: row[field].casefold(), reverse=reverse)
+    return present + empty
 
 
 class Database:
@@ -349,8 +378,19 @@ class Database:
         )
         return clause, (f"%{query}%",) * (len(TEXT_FIELDS) + 1)
 
-    def list(self, query=None, limit=None, offset=0):
-        """Return postcards, newest first; limit/offset select an optional page."""
+    def list(self, query=None, sort=None, direction="asc", limit=None, offset=0):
+        """Return postcards, optionally sorted by a SORT_FIELDS key and paged.
+
+        The default order is newest first (highest id); limit/offset select an
+        optional page. A sorted listing orders the complete (filtered) result
+        before the page is cut, so pages taken with the same sort continue
+        seamlessly where the previous page ended.
+        """
+        if sort is not None and sort not in SORT_FIELDS:
+            raise ValueError(
+                f"sort must be one of: {', '.join(sorted(SORT_FIELDS))}")
+        if direction not in ("asc", "desc"):
+            raise ValueError("dir must be 'asc' or 'desc'")
         if limit is not None and (type(limit) is not int or limit < 1):
             raise ValueError("limit must be a positive integer")
         if type(offset) is not int or offset < 0:
@@ -361,12 +401,17 @@ class Database:
             clause, params = self._search_clause(query)
             sql += clause
         sql += " ORDER BY id DESC"
-        if limit is not None or offset:
+        if sort is None and (limit is not None or offset):
             # SQLite requires LIMIT with OFFSET; -1 means unlimited.
             sql += " LIMIT ? OFFSET ?"
             params = (*params, -1 if limit is None else limit, offset)
         with self._write_lock():
-            return [self._row(r) for r in self._conn.execute(sql, params)]
+            rows = [self._row(r) for r in self._conn.execute(sql, params)]
+        if sort is not None:
+            rows = _sorted_rows(rows, sort, direction)
+            if limit is not None or offset:
+                rows = rows[offset:None if limit is None else offset + limit]
+        return rows
 
     def count(self, query=None):
         """Return the number of postcards matching the optional search query."""

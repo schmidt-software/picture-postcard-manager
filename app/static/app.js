@@ -447,6 +447,46 @@ function imagePreview(imagePath, side, fullSize = false) {
   return cell;
 }
 
+// --- Overview sorting ---------------------------------------------------
+
+const SORT_STORAGE_KEY = "picture-postcard-manager-sort";
+const SORT_KEYS = ["place", "region", "year", "updated"];
+let currentSort = { key: "", direction: "asc" };
+
+function loadSavedSort() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SORT_STORAGE_KEY));
+    if (saved && SORT_KEYS.includes(saved.key)
+        && ["asc", "desc"].includes(saved.direction)) {
+      currentSort = { key: saved.key, direction: saved.direction };
+    }
+  } catch {
+    // Newest-first is the default when storage is unavailable or invalid.
+  }
+}
+
+function saveSort() {
+  try {
+    localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(currentSort));
+  } catch {
+    // Sorting still works for this page when browser storage is unavailable.
+  }
+}
+
+function renderSortControls() {
+  $("#sort-select").value = currentSort.key;
+  const direction = $("#sort-direction");
+  direction.hidden = !currentSort.key;
+  direction.dataset.i18n = currentSort.direction === "desc" ? "sortDescending" : "sortAscending";
+  direction.textContent = translate(direction.dataset.i18n);
+  direction.setAttribute("aria-pressed", String(currentSort.direction === "desc"));
+}
+
+// Loads one page of the overview; append=true fetches the page after the rows
+// loaded so far, otherwise the list restarts at the first page. The request
+// counter drops stale responses (and their errors): only the newest request
+// may update the list, so a slow response for an old sort order or search
+// term never overwrites or extends the rows of a newer one.
 async function loadList(append = false) {
   const request = ++listRequest;
   try {
@@ -454,12 +494,16 @@ async function loadList(append = false) {
     const offset = append && currentItems ? currentItems.length : 0;
     const params = [`limit=${PAGE_SIZE}`, `offset=${offset}`];
     if (q) params.push(`q=${encodeURIComponent(q)}`);
+    if (currentSort.key) {
+      params.push(`sort=${currentSort.key}`, `dir=${currentSort.direction}`);
+    }
     const items = await api(`/api/postcards?${params.join("&")}`);
     if (request !== listRequest) return;
     currentItems = append && currentItems ? currentItems.concat(items) : items;
     listComplete = items.length < PAGE_SIZE;
     renderList();
   } catch (err) {
+    if (request !== listRequest) return;
     showApiError(err);
   }
 }
@@ -797,6 +841,26 @@ $("#search").addEventListener("input", () => {
   searchTimer = setTimeout(() => loadList(), 250);
 });
 $("#load-more").addEventListener("click", () => loadList(true));
+
+// Changing the sort key or direction resets the overview to its first page.
+$("#sort-select").addEventListener("change", (event) => {
+  currentSort = { key: event.target.value, direction: "asc" };
+  saveSort();
+  renderSortControls();
+  loadList();
+});
+$("#sort-direction").addEventListener("click", () => {
+  if (!currentSort.key) return;
+  currentSort = {
+    key: currentSort.key,
+    direction: currentSort.direction === "asc" ? "desc" : "asc",
+  };
+  saveSort();
+  renderSortControls();
+  loadList();
+});
+loadSavedSort();
+renderSortControls();
 
 // popstate also covers fragment changes; listening to hashchange too would route twice.
 window.addEventListener("popstate", route);

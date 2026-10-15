@@ -81,14 +81,22 @@ The form stores six canonical fields:
 
 Image paths can be typed manually or filled by uploading an image (see
 [Image uploads](#image-uploads)); manually entered paths are stored as entered.
-Optional values can be left empty. Existing
-`title` and `notes` values remain in the database and in exports for compatibility,
-but are not part of the current entry form.
+Optional values can be left empty.
 
-When opening a database from an earlier schema, startup adds the six fields (schema 1)
-and the `tags` column (schema 2) as needed, in one transaction, with
-empty-string defaults in a transaction and advances the SQLite `user_version`.
-Existing IDs, timestamps, titles, notes, indexes and unrelated data are preserved.
+The legacy `title` and `notes` fields were removed in schema version 5
+([#23](https://github.com/schmidt-software/picture-postcard-manager/issues/23)).
+Their content is not lost: the migration merges non-empty values into
+`description` as paragraphs in the order title, notes, existing description,
+separated by one blank line each. Empty or whitespace-only values are skipped,
+so records without legacy content keep their description unchanged.
+The API rejects `title` and `notes` as unknown fields on create and update.
+
+When opening a database from an earlier schema, startup adds the six fields (schema 1),
+the `tags` column (schema 2) and the `uuid` column (schema 4) as needed, merges the
+legacy `title` and `notes` columns into `description` and drops them (schema 5),
+all in one transaction, and advances the SQLite `user_version`.
+Existing IDs, timestamps, indexes on remaining columns and unrelated data are
+preserved; indexes on the dropped legacy columns are removed with them.
 Migrated records without a front image remain available in browse and search;
 they must be given a non-empty `front_image_path` before they can be edited.
 The database migration does not discard legacy data.
@@ -451,21 +459,19 @@ logged on the server only).
 
 ### JSON export format
 
-The current export uses schema version 4. Each record includes the six canonical
-fields, `tags` (array of strings), plus `title` and `notes` for compatibility, and the `id`, `created_at`
+The current export uses schema version 5. Each record includes the six canonical
+fields, `tags` (array of strings), and the `id`, `uuid`, `created_at`
 and `updated_at` values.
 
 ```json
 {
   "format": "picture-postcard-manager",
-  "schema_version": 4,
+  "schema_version": 5,
   "exported_at": "2026-01-01T12:00:00+00:00",
   "postcards": [
     {
       "id": 1,
       "uuid": "b962a358-8899-4000-8999-6973bac5d599",
-      "title": "",
-      "notes": "",
       "front_image_path": "images/front.jpg",
       "back_image_path": "images/back.jpg",
       "place": "Example place",
@@ -485,8 +491,12 @@ directory (`PPM_IMAGE_DIR`, by default `data/images`) together with the JSON exp
 or database; uploaded `/images/...` paths only work on an installation that has
 the same image files.
 
-Version-1, version-2 and version-3 imports remain supported; records without `tags` import
-with an empty tag list. Version-4 exports round-trip tags exactly. An invalid `tags`
+Version-1 to version-4 imports remain supported; records without `tags` import
+with an empty tag list, and legacy `title` and `notes` values are merged into
+`description` using the same format as the database migration (title, then
+notes, then description, as paragraphs separated by one blank line; empty
+values are skipped). Version-5 exports round-trip exactly and reject `title`
+and `notes` as unknown fields. An invalid `tags`
 value fails the whole import (nothing is imported).
 
 Version-1 imports remain supported. Such older records may have no front image

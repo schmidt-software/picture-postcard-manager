@@ -74,7 +74,7 @@ async function runTests() {
   assert.equal(context.window.location.hash, `#postcards/${firstUuid}`);
   assert.equal(get("view-detail").hidden, false);
   assert.equal(get("detail-title").textContent, "Postcard #42");
-  context.fetch = async (url) => response(url === "/api/postcards" ? [postcard] : postcard);
+  context.fetch = async (url) => response(url.startsWith("/api/postcards?") ? [postcard] : postcard);
   await get("detail-back").emit("click");
   await flush();
   assert.equal(context.window.location.hash, "#browse");

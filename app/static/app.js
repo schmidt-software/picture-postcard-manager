@@ -11,7 +11,12 @@ let detailState = "";
 let routeRequest = 0;
 let listRequest = 0;
 let shareState = "";
+// Overview pagination: number of rows fetched per request, the rows loaded so
+// far (also re-rendered after a language change), and whether the last page
+// was short (no more rows on the server).
+const PAGE_SIZE = 100;
 let currentItems = null;
+let listComplete = true;
 
 function translate(key, params = {}) {
   const value = translations[currentLanguage][key] ?? translations.en[key] ?? key;
@@ -442,13 +447,17 @@ function imagePreview(imagePath, side, fullSize = false) {
   return cell;
 }
 
-async function loadList() {
+async function loadList(append = false) {
   const request = ++listRequest;
   try {
     const q = $("#search").value.trim();
-    const items = await api(`/api/postcards${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+    const offset = append && currentItems ? currentItems.length : 0;
+    const params = [`limit=${PAGE_SIZE}`, `offset=${offset}`];
+    if (q) params.push(`q=${encodeURIComponent(q)}`);
+    const items = await api(`/api/postcards?${params.join("&")}`);
     if (request !== listRequest) return;
-    currentItems = items;
+    currentItems = append && currentItems ? currentItems.concat(items) : items;
+    listComplete = items.length < PAGE_SIZE;
     renderList();
   } catch (err) {
     showApiError(err);
@@ -523,6 +532,7 @@ function renderList() {
     return tr;
   }));
   $("#empty-hint").hidden = currentItems.length > 0;
+  $("#load-more").hidden = listComplete;
 }
 
 // --- Entry form -------------------------------------------------------------
@@ -784,8 +794,9 @@ document.querySelectorAll("nav button").forEach((b) =>
 let searchTimer;
 $("#search").addEventListener("input", () => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(loadList, 250);
+  searchTimer = setTimeout(() => loadList(), 250);
 });
+$("#load-more").addEventListener("click", () => loadList(true));
 
 // popstate also covers fragment changes; listening to hashchange too would route twice.
 window.addEventListener("popstate", route);

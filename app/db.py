@@ -1,4 +1,10 @@
-"""SQLite persistence layer for postcards."""
+"""SQLite persistence layer for postcards.
+
+File databases use one connection per thread with WAL mode, so concurrent
+requests do not serialize on a global lock. In-memory databases keep a single
+shared connection guarded by a lock, because each new ``:memory:`` connection
+would create a separate empty database.
+"""
 
 import json
 import sqlite3
@@ -39,52 +45,132 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+class _NoLock:
+    """No-op context manager used when per-thread connections need no lock."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+_NO_LOCK = _NoLock()
+
+
 class Database:
     def __init__(self, path):
-        self._conn = sqlite3.connect(path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        self._path = str(path)
+        self._shared = self._path == ":memory:"
         self._lock = threading.Lock()
+        self._local = threading.local()
+        self._connections = []
+        self._closed = False
+        conn = self._open_connection()
         try:
-            with self._lock, self._conn:
-                version = self._conn.execute("PRAGMA user_version").fetchone()[0]
+            with self._lock, conn:
+                version = conn.execute("PRAGMA user_version").fetchone()[0]
                 if version > SCHEMA_VERSION:
                     raise ValueError(f"unsupported database schema version: {version}")
-                self._conn.execute("BEGIN")
-                self._conn.execute(SCHEMA)
+                conn.execute("BEGIN")
+                conn.execute(SCHEMA)
                 columns = {
-                    row["name"] for row in self._conn.execute("PRAGMA table_info(postcards)")
+                    row["name"] for row in conn.execute("PRAGMA table_info(postcards)")
                 }
                 for field in POSTCARD_FIELDS:
                     if field not in columns:
-                        self._conn.execute(
+                        conn.execute(
                             f"ALTER TABLE postcards ADD COLUMN {field} TEXT NOT NULL DEFAULT ''"
                         )
                 if "tags" not in columns:
-                    self._conn.execute(
+                    conn.execute(
                         "ALTER TABLE postcards ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'"
                     )
                 if "uuid" not in columns:
-                    self._conn.execute("ALTER TABLE postcards ADD COLUMN uuid TEXT NOT NULL DEFAULT ''")
-                    for row in self._conn.execute("SELECT id FROM postcards").fetchall():
-                        self._conn.execute(
+                    conn.execute("ALTER TABLE postcards ADD COLUMN uuid TEXT NOT NULL DEFAULT ''")
+                    for row in conn.execute("SELECT id FROM postcards").fetchall():
+                        conn.execute(
                             "UPDATE postcards SET uuid = ? WHERE id = ?",
                             (str(uuid4()), row["id"]),
                         )
-                self._conn.execute(
+                conn.execute(
                     "CREATE UNIQUE INDEX IF NOT EXISTS postcards_uuid ON postcards(uuid)"
                 )
-                self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         except (sqlite3.Error, ValueError):
-            self._conn.close()
+            self.close()
             raise
+        if self._shared:
+            self._shared_conn = conn
+
+    def _open_connection(self):
+        """Create and register a configured connection for the current thread."""
+        conn = sqlite3.connect(self._path, check_same_thread=False, timeout=30)
+        conn.row_factory = sqlite3.Row
+        if not self._shared:
+            # WAL lets readers run while a writer commits; NORMAL is durable
+            # enough with WAL and avoids an fsync per transaction.
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
+        with self._lock:
+            self._connections.append(conn)
+        self._local.conn = conn
+        return conn
+
+    @property
+    def _conn(self):
+        if self._closed:
+            raise sqlite3.ProgrammingError("database is closed")
+        if self._shared:
+            return self._shared_conn
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = self._open_connection()
+        return conn
 
     def close(self):
-        self._conn.close()
+        """Close all connections; later operations raise sqlite3.ProgrammingError."""
+        with self._lock:
+            self._closed = True
+            connections, self._connections = self._connections, []
+        for conn in connections:
+            conn.close()
+
+    def release_thread_connection(self):
+        """Close and unregister the calling thread's connection, if any.
+
+        Request handlers call this when a request finishes so short-lived
+        server threads do not leak connections; the next operation on this
+        thread transparently opens a fresh one. The shared in-memory
+        connection is never released this way, only by close().
+        """
+        if self._shared:
+            return
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            return
+        self._local.conn = None
+        with self._lock:
+            if conn in self._connections:
+                self._connections.remove(conn)
+        conn.close()
+
+    def open_connection_count(self):
+        """Return the number of currently registered connections (for tests)."""
+        with self._lock:
+            return len(self._connections)
+
+    def _write_lock(self):
+        """Serialize access for the shared in-memory connection only."""
+        return self._lock if self._shared else _NO_LOCK
 
     def ping(self):
         """Raise sqlite3.Error when the database is not reachable."""
-        with self._lock:
-            self._conn.execute("SELECT 1").fetchone()
+        # Resolve the connection first: for file databases _conn may register
+        # a new per-thread connection, which itself takes the registry lock.
+        conn = self._conn
+        with self._write_lock():
+            conn.execute("SELECT 1").fetchone()
 
     @staticmethod
     def _clean(data):
@@ -148,22 +234,46 @@ class Database:
             raise ValueError("uuid must be a canonical lowercase UUIDv4")
         return value
 
-    def list(self, query=None):
+    @staticmethod
+    def _search_clause(query):
+        # Tags are matched as decoded text, not as their JSON representation.
+        clause = " WHERE " + " OR ".join(
+            [f"{field} LIKE ?" for field in TEXT_FIELDS]
+            + ["EXISTS (SELECT 1 FROM json_each(postcards.tags) WHERE value LIKE ?)"]
+        )
+        return clause, (f"%{query}%",) * (len(TEXT_FIELDS) + 1)
+
+    def list(self, query=None, limit=None, offset=0):
+        """Return postcards, newest first; limit/offset select an optional page."""
+        if limit is not None and (type(limit) is not int or limit < 1):
+            raise ValueError("limit must be a positive integer")
+        if type(offset) is not int or offset < 0:
+            raise ValueError("offset must be a non-negative integer")
         sql = "SELECT * FROM postcards"
         params = ()
         if query:
-            # Tags are matched as decoded text, not as their JSON representation.
-            sql += " WHERE " + " OR ".join(
-                [f"{field} LIKE ?" for field in TEXT_FIELDS]
-                + ["EXISTS (SELECT 1 FROM json_each(postcards.tags) WHERE value LIKE ?)"]
-            )
-            params = (f"%{query}%",) * (len(TEXT_FIELDS) + 1)
+            clause, params = self._search_clause(query)
+            sql += clause
         sql += " ORDER BY id DESC"
-        with self._lock:
+        if limit is not None or offset:
+            # SQLite requires LIMIT with OFFSET; -1 means unlimited.
+            sql += " LIMIT ? OFFSET ?"
+            params = (*params, -1 if limit is None else limit, offset)
+        with self._write_lock():
             return [self._row(r) for r in self._conn.execute(sql, params)]
 
+    def count(self, query=None):
+        """Return the number of postcards matching the optional search query."""
+        sql = "SELECT COUNT(*) FROM postcards"
+        params = ()
+        if query:
+            clause, params = self._search_clause(query)
+            sql += clause
+        with self._write_lock():
+            return self._conn.execute(sql, params).fetchone()[0]
+
     def get(self, postcard_id):
-        with self._lock:
+        with self._write_lock():
             row = self._conn.execute(
                 "SELECT * FROM postcards WHERE id = ?", (postcard_id,)
             ).fetchone()
@@ -171,7 +281,7 @@ class Database:
 
     def get_by_uuid(self, value):
         self._validate_uuid(value)
-        with self._lock:
+        with self._write_lock():
             row = self._conn.execute(
                 "SELECT * FROM postcards WHERE uuid = ?", (value,)
             ).fetchone()
@@ -207,7 +317,7 @@ class Database:
     def create(self, data):
         if isinstance(data, dict) and "uuid" in data:
             raise ValueError("uuid is generated by the server and cannot be changed")
-        with self._lock, self._conn:
+        with self._write_lock(), self._conn:
             new_id = self._insert(data)
         return self.get(new_id)
 
@@ -215,7 +325,7 @@ class Database:
         if isinstance(data, dict) and "uuid" in data:
             raise ValueError("uuid is generated by the server and cannot be changed")
         fields = self._clean(data)
-        with self._lock, self._conn:
+        with self._write_lock(), self._conn:
             existing = self._conn.execute(
                 "SELECT * FROM postcards WHERE id = ?", (postcard_id,)
             ).fetchone()
@@ -231,7 +341,7 @@ class Database:
         return self.get(postcard_id)
 
     def delete(self, postcard_id):
-        with self._lock, self._conn:
+        with self._write_lock(), self._conn:
             cur = self._conn.execute("DELETE FROM postcards WHERE id = ?", (postcard_id,))
         return cur.rowcount > 0
 
@@ -271,7 +381,7 @@ class Database:
         entries = payload["postcards"]
         if not all(isinstance(e, dict) for e in entries):
             raise ValueError("every postcard must be an object")
-        with self._lock, self._conn:
+        with self._write_lock(), self._conn:
             if mode == "replace":
                 self._conn.execute("DELETE FROM postcards")
             for index, entry in enumerate(entries, start=1):

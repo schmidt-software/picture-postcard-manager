@@ -12,13 +12,15 @@ import threading
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-SCHEMA_VERSION = 4
-IMPORT_VERSIONS = (1, 2, 3, 4)
+SCHEMA_VERSION = 5
+IMPORT_VERSIONS = (1, 2, 3, 4, 5)
 
 POSTCARD_FIELDS = (
     "front_image_path", "back_image_path", "place", "region", "year", "description",
 )
-TEXT_FIELDS = ("title", "notes", *POSTCARD_FIELDS)
+# Legacy columns removed in schema 5; their content is merged into description.
+LEGACY_FIELDS = ("title", "notes")
+TEXT_FIELDS = POSTCARD_FIELDS
 EDITABLE_FIELDS = (*TEXT_FIELDS, "tags")
 RECORD_FIELDS = (*EDITABLE_FIELDS, "id", "uuid", "created_at", "updated_at")
 
@@ -26,8 +28,6 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS postcards (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     uuid        TEXT NOT NULL,
-    title       TEXT NOT NULL DEFAULT '',
-    notes       TEXT NOT NULL DEFAULT '',
     front_image_path TEXT NOT NULL DEFAULT '',
     back_image_path TEXT NOT NULL DEFAULT '',
     place       TEXT NOT NULL DEFAULT '',
@@ -56,6 +56,22 @@ class _NoLock:
 
 
 _NO_LOCK = _NoLock()
+
+
+def merge_legacy_fields(title, notes, description):
+    """Merge the legacy title and notes values into the description.
+
+    Non-empty values become paragraphs in the order title, notes, description,
+    separated by exactly one blank line. Empty or whitespace-only values are
+    skipped; when title and notes are both empty, the description is returned
+    unchanged. Line breaks inside each value are preserved.
+    """
+    extras = [value.strip() for value in (title, notes) if value and value.strip()]
+    if not extras:
+        return description
+    if description and description.strip():
+        extras.append(description.strip())
+    return "\n\n".join(extras)
 
 
 class Database:
@@ -96,6 +112,7 @@ class Database:
                 conn.execute(
                     "CREATE UNIQUE INDEX IF NOT EXISTS postcards_uuid ON postcards(uuid)"
                 )
+                self._drop_legacy_columns(conn, columns)
                 conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         except (sqlite3.Error, ValueError):
             self.close()
@@ -171,6 +188,42 @@ class Database:
         conn = self._conn
         with self._write_lock():
             conn.execute("SELECT 1").fetchone()
+
+    def _drop_legacy_columns(self, conn, columns):
+        """Schema 5: merge legacy title/notes into description, then drop them.
+
+        Runs on the explicit migration connection, inside the startup
+        migration transaction, so a failure rolls everything back. Indexes
+        that reference a dropped column are removed as well; SQLite cannot
+        drop an indexed column otherwise.
+        """
+        legacy = [field for field in LEGACY_FIELDS if field in columns]
+        if not legacy:
+            return
+        selected = ", ".join(("id", *legacy, "description"))
+        for row in conn.execute(f"SELECT {selected} FROM postcards").fetchall():
+            merged = merge_legacy_fields(
+                row["title"] if "title" in legacy else "",
+                row["notes"] if "notes" in legacy else "",
+                row["description"],
+            )
+            if merged != row["description"]:
+                conn.execute(
+                    "UPDATE postcards SET description = ? WHERE id = ?",
+                    (merged, row["id"]),
+                )
+        for index in conn.execute("PRAGMA index_list(postcards)").fetchall():
+            name = index["name"]
+            if name.startswith("sqlite_autoindex"):
+                continue
+            indexed = [
+                info["name"]
+                for info in conn.execute(f'PRAGMA index_info("{name}")')
+            ]
+            if any(field in indexed for field in legacy):
+                conn.execute(f'DROP INDEX "{name}"')
+        for field in legacy:
+            conn.execute(f"ALTER TABLE postcards DROP COLUMN {field}")
 
     @staticmethod
     def _clean(data):
@@ -361,7 +414,10 @@ class Database:
         The import runs in a single transaction.
         Version-1 exports may contain legacy entries without image paths.
         Such entries must receive a front image path before they can be edited.
-        Versions 1-3 are accepted; version 4 adds stable UUID share identifiers.
+        Versions 1-4 are accepted; version 4 adds stable UUID share identifiers
+        and version 5 removes the legacy title and notes fields. Imports of
+        versions 1-4 merge non-empty title and notes values into description
+        (see merge_legacy_fields); version-5 imports reject them as unknown.
         Replace preserves exported UUIDs; append generates new ones for copies.
         Version-2 exports retain those empty paths with record IDs and timestamps.
         Unknown fields are rejected rather than discarded.
@@ -394,9 +450,28 @@ class Database:
                     entry = {key: value for key, value in entry.items()
                              if key != "front_image_path"}
                 try:
-                    if payload.get("schema_version") == 4 and "uuid" not in entry:
-                        raise ValueError("schema version 4 postcards must include uuid")
+                    if version < 5:
+                        entry = self._merge_legacy_entry(entry)
+                    if payload.get("schema_version", 0) >= 4 and "uuid" not in entry:
+                        raise ValueError("schema version 4 and newer postcards must include uuid")
                     self._insert(entry, keep_id=(mode == "replace"), allow_legacy=legacy)
                 except (ValueError, sqlite3.IntegrityError) as exc:
                     raise ValueError(f"postcard {index}: {exc}") from exc
         return len(entries)
+
+    @staticmethod
+    def _merge_legacy_entry(entry):
+        """Map legacy title/notes of version 1-4 imports into description."""
+        if "title" not in entry and "notes" not in entry:
+            return entry
+        entry = dict(entry)
+        values = {}
+        for field in (*LEGACY_FIELDS, "description"):
+            value = entry.pop(field, None)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"{field} must be a string or null")
+            values[field] = value or ""
+        entry["description"] = merge_legacy_fields(
+            values["title"], values["notes"], values["description"]
+        )
+        return entry

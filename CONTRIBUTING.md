@@ -19,3 +19,5 @@
 - When adding postcard fields, update the schema in `app/db.py` (`SCHEMA`, `EDITABLE_FIELDS`,
   and a migration via `PRAGMA user_version`), the UI in `app/static/`, the tests, and the README.
 - Database changes must keep JSON export/import working; bump `schema_version` when the export format changes.
+- Schema history: version 5 removed the legacy `title` and `notes` fields; their content
+  is merged into `description` on migration and on imports of versions 1-4 (see the README).

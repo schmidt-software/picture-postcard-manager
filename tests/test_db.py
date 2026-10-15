@@ -5,7 +5,7 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from app.db import Database, POSTCARD_FIELDS, SCHEMA_VERSION
+from app.db import Database, POSTCARD_FIELDS, SCHEMA_VERSION, merge_legacy_fields
 
 
 LEGACY_SCHEMA = """
@@ -44,19 +44,26 @@ class DatabaseTest(unittest.TestCase):
                 self.addCleanup(db.close)
                 legacy = db.get(17)
                 self.assertEqual(
-                    {key: legacy[key] for key in ("id", "title", "notes", "created_at", "updated_at")},
-                    {"id": 17, "title": "Legacy title", "notes": "Legacy notes",
+                    {key: legacy[key] for key in ("id", "description", "created_at", "updated_at")},
+                    {"id": 17, "description": "Legacy title\n\nLegacy notes",
                      "created_at": "created", "updated_at": "updated"},
                 )
+                self.assertNotIn("title", legacy)
+                self.assertNotIn("notes", legacy)
                 for field in POSTCARD_FIELDS:
-                    self.assertEqual(legacy[field], "")
+                    if field != "description":
+                        self.assertEqual(legacy[field], "")
                 self.assertEqual(legacy["tags"], [])
                 with closing(sqlite3.connect(path)) as conn, conn:
                     self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
                     self.assertEqual(conn.execute("SELECT value FROM unrelated").fetchone()[0], "keep me")
-                    self.assertIsNotNone(conn.execute(
+                    # The index on the dropped title column is removed with the column.
+                    self.assertIsNone(conn.execute(
                         "SELECT name FROM sqlite_master WHERE name = 'postcards_title'"
                     ).fetchone())
+                    columns = [row[1] for row in conn.execute("PRAGMA table_info(postcards)")]
+                    self.assertNotIn("title", columns)
+                    self.assertNotIn("notes", columns)
                 with self.assertRaisesRegex(ValueError, "front_image_path"):
                     db.update(17, {"description": "Needs image"})
                 self.assertEqual(db.get(17), legacy)
@@ -67,6 +74,169 @@ class DatabaseTest(unittest.TestCase):
                 self.addCleanup(reopened.close)
                 self.assertEqual(reopened.get(17), legacy)
                 self.assertGreater(reopened.create({"front_image_path": "/front.jpg"})["id"], 50)
+
+    def test_legacy_merge_format(self):
+        """Title, then notes, then description, verbatim with single blank-line joins."""
+        cases = (
+            (("", "", ""), ""),
+            (("", "", "Desc"), "Desc"),
+            (("Title", "", ""), "Title"),
+            (("", "Notes", ""), "Notes"),
+            (("Title", "Notes", ""), "Title\n\nNotes"),
+            (("Title", "", "Desc"), "Title\n\nDesc"),
+            (("", "Notes", "Desc"), "Notes\n\nDesc"),
+            (("Title", "Notes", "Desc"), "Title\n\nNotes\n\nDesc"),
+            # Whitespace-only values are skipped.
+            ((" \n ", "\t", "Desc"), "Desc"),
+            # Existing newlines at joins count towards the blank line; nothing
+            # is duplicated and the payload is not trimmed (trailing newlines
+            # of the last piece are kept).
+            (("Title\n", "\nNotes", "Desc\n\n"), "Title\n\nNotes\n\nDesc\n\n"),
+            (("Title\n\n", "Notes", ""), "Title\n\nNotes"),
+            (("Title", "\n\n\nNotes", ""), "Title\n\n\nNotes"),
+            # Non-newline whitespace is preserved verbatim (lossless).
+            ((" Title ", "", "\tDesc "), " Title \n\n\tDesc "),
+            # Internal line breaks are preserved.
+            (("Title", "Line 1\nLine 2", ""), "Title\n\nLine 1\nLine 2"),
+        )
+        for (title, notes, description), expected in cases:
+            with self.subTest(title=title, notes=notes, description=description):
+                self.assertEqual(merge_legacy_fields(title, notes, description), expected)
+
+    def test_v4_migration_merges_title_and_notes_into_description(self):
+        rows = (
+            (1, "Berlin", "Souvenir", "Street view", "Berlin\n\nSouvenir\n\nStreet view"),
+            (2, "Only title", "", "", "Only title"),
+            (3, "", "Only notes", "Desc", "Only notes\n\nDesc"),
+            (4, "", "", "Untouched", "Untouched"),
+            (5, "  ", " \n", "Whitespace legacy", "Whitespace legacy"),
+            # The migration is lossless: surrounding whitespace of non-empty
+            # values is preserved and existing newlines at joins are reused.
+            (6, " Padded ", "Notes\n", "\nDesc ", " Padded \n\nNotes\n\nDesc "),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "v4.db"
+            with closing(sqlite3.connect(path)) as conn, conn:
+                conn.executescript("""
+                    CREATE TABLE postcards (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        uuid TEXT NOT NULL,
+                        title TEXT NOT NULL DEFAULT '',
+                        notes TEXT NOT NULL DEFAULT '',
+                        front_image_path TEXT NOT NULL DEFAULT '',
+                        back_image_path TEXT NOT NULL DEFAULT '',
+                        place TEXT NOT NULL DEFAULT '',
+                        region TEXT NOT NULL DEFAULT '',
+                        year TEXT NOT NULL DEFAULT '',
+                        description TEXT NOT NULL DEFAULT '',
+                        tags TEXT NOT NULL DEFAULT '[]',
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
+                    CREATE UNIQUE INDEX postcards_uuid ON postcards(uuid);
+                    PRAGMA user_version = 4;
+                """)
+                for pid, title, notes, description, _ in rows:
+                    conn.execute(
+                        "INSERT INTO postcards (id, uuid, title, notes, front_image_path,"
+                        " description, created_at, updated_at)"
+                        " VALUES (?, ?, ?, ?, '/front.jpg', ?, 'c', 'u')",
+                        (pid, f"b962a358-8899-4000-8999-6973bac5d59{pid}", title, notes, description),
+                    )
+            db = Database(path)
+            self.addCleanup(db.close)
+            for pid, _, _, _, expected in rows:
+                with self.subTest(id=pid):
+                    record = db.get(pid)
+                    self.assertEqual(record["description"], expected)
+                    self.assertNotIn("title", record)
+                    self.assertNotIn("notes", record)
+            self.assertEqual(db.get(1)["updated_at"], "u")
+            with closing(sqlite3.connect(path)) as conn, conn:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
+                columns = [row[1] for row in conn.execute("PRAGMA table_info(postcards)")]
+                self.assertNotIn("title", columns)
+                self.assertNotIn("notes", columns)
+
+    def test_legacy_migration_rebuilds_table_without_drop_column(self):
+        """The schema-5 migration uses the table rebuild on every SQLite version.
+
+        ``ALTER TABLE ... DROP COLUMN`` requires SQLite >= 3.35, so the
+        migration must never emit it. The rebuild must preserve ids, uuids,
+        timestamps, tags and all data, recreate the uuid index, and keep the
+        AUTOINCREMENT sequence so deleted ids are not reused.
+        """
+        class NoDropColumnConnection(sqlite3.Connection):
+            def execute(self, sql, parameters=()):
+                if "DROP COLUMN" in sql.upper():
+                    raise AssertionError(f"DROP COLUMN must not be used: {sql}")
+                return super().execute(sql, parameters)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "v4.db"
+            with closing(sqlite3.connect(path)) as conn, conn:
+                conn.executescript("""
+                    CREATE TABLE postcards (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        uuid TEXT NOT NULL,
+                        title TEXT NOT NULL DEFAULT '',
+                        notes TEXT NOT NULL DEFAULT '',
+                        front_image_path TEXT NOT NULL DEFAULT '',
+                        back_image_path TEXT NOT NULL DEFAULT '',
+                        place TEXT NOT NULL DEFAULT '',
+                        region TEXT NOT NULL DEFAULT '',
+                        year TEXT NOT NULL DEFAULT '',
+                        description TEXT NOT NULL DEFAULT '',
+                        tags TEXT NOT NULL DEFAULT '[]',
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
+                    CREATE UNIQUE INDEX postcards_uuid ON postcards(uuid);
+                    PRAGMA user_version = 4;
+                """)
+                conn.execute(
+                    "INSERT INTO postcards (id, uuid, title, notes, front_image_path, place,"
+                    " tags, created_at, updated_at) VALUES (7, 'b962a358-8899-4000-8999-"
+                    "6973bac5d597', 'T', 'N', '/front.jpg', 'Wien', '[\"alt\"]', 'c7', 'u7')"
+                )
+                conn.execute(
+                    "INSERT INTO postcards (id, uuid, front_image_path, created_at, updated_at)"
+                    " VALUES (9, 'b962a358-8899-4000-8999-6973bac5d599', '/f.jpg', 'c9', 'u9')"
+                )
+                conn.execute("DELETE FROM postcards WHERE id = 9")
+
+            real_connect = sqlite3.connect
+
+            def connect(*args, **kwargs):
+                kwargs["factory"] = NoDropColumnConnection
+                return real_connect(*args, **kwargs)
+
+            with patch("app.db.sqlite3.connect", side_effect=connect):
+                db = Database(path)
+                self.addCleanup(db.close)
+                record = db.get(7)
+                self.assertEqual(record["description"], "T\n\nN")
+                self.assertEqual(record["uuid"], "b962a358-8899-4000-8999-6973bac5d597")
+                self.assertEqual(record["place"], "Wien")
+                self.assertEqual(record["tags"], ["alt"])
+                self.assertEqual(record["created_at"], "c7")
+                self.assertEqual(record["updated_at"], "u7")
+                # Deleted ids are not reused after the rebuild.
+                self.assertGreater(db.create({"front_image_path": "/new.jpg"})["id"], 9)
+            with closing(sqlite3.connect(path)) as conn, conn:
+                columns = [row[1] for row in conn.execute("PRAGMA table_info(postcards)")]
+                self.assertNotIn("title", columns)
+                self.assertNotIn("notes", columns)
+                # The unique uuid index survives the rebuild.
+                self.assertIsNotNone(conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'index'"
+                    " AND name = 'postcards_uuid'"
+                ).fetchone())
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        "INSERT INTO postcards (uuid, front_image_path, created_at, updated_at)"
+                        " VALUES ('b962a358-8899-4000-8999-6973bac5d597', '/x.jpg', 'c', 'u')"
+                    )
 
     def test_failed_migration_rolls_back_all_schema_changes(self):
         class FailingConnection(sqlite3.Connection):

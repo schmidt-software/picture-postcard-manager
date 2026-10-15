@@ -28,6 +28,7 @@ app/
   server.py        HTTP server, REST API, static file serving
   db.py            SQLite schema and data access
   images.py        Validation and storage of uploaded images
+  cleanup.py       CLI to list or delete orphaned uploaded images
   static/          Web UI (index.html, app.js, languages.js, style.css)
 tests/             unittest-based API, database and localization tests
 data/              Default local (non-Docker) database and images/ location (git-ignored)
@@ -109,12 +110,49 @@ is running discards that upload's result.
 - If an upload fails, the error is shown next to the button and the previous path
   is kept. Saving is disabled while an upload is running. Results of uploads that
   finish after the form was switched, reset or cancelled are ignored.
-- Uploaded files are not deleted when a postcard is deleted or its path changed.
+- Uploaded files are not deleted automatically when a postcard is deleted or its
+  path changed; use the [orphaned-image cleanup](#cleaning-up-orphaned-images)
+  command to remove unreferenced files.
 
 Images are stored in `PPM_IMAGE_DIR`, which defaults to an `images` directory next
 to the database file (`data/images` locally, `/data/images` in the Docker volume). Only files
 with generated names that are regular files (not symlinks) directly inside this
 directory and whose content matches their extension are served under `/images/`.
+
+### Cleaning up orphaned images
+
+Deleting a postcard or changing its image path can leave uploaded files behind
+in `PPM_IMAGE_DIR`. The cleanup command lists or removes generated files that no
+postcard references:
+
+```sh
+python3 -m app.cleanup                  # Dry run: list orphaned files only
+python3 -m app.cleanup --delete         # Delete the listed orphaned files
+```
+
+It uses `PPM_DB_PATH` and `PPM_IMAGE_DIR` (or `--db` and `--image-dir`) with the
+same defaults as the server. In the Docker setup, run it inside the container:
+
+```sh
+docker compose exec app python -m app.cleanup           # Dry run
+docker compose exec app python -m app.cleanup --delete
+```
+
+Safety rules:
+
+- Only files with generated upload names (32 hex characters plus `.png`, `.jpg`,
+  `.gif` or `.webp`) directly inside the image directory are considered.
+- A file is kept when its name appears as the last segment of any postcard's
+  front or back image path, however the path was entered — including URLs with
+  a query or fragment (`/images/<name>.png?v=1`), percent-encoded names and
+  full URLs (`http://host/images/<name>.png`). When a value is ambiguous, the
+  file is kept.
+- Manually added files, other filenames, subdirectories and symlinks are never
+  touched. JSON export/import and backups are unaffected; exports reference
+  images by path only.
+- Run the command while the collection is not being edited, and prefer a dry run
+  (the default) before `--delete`. Deleted files are only recoverable from a
+  [backup](#complete-backup-and-restore).
 
 ## Tags
 

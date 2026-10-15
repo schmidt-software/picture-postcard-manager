@@ -38,6 +38,24 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    @staticmethod
+    def _page_params(params):
+        """Parse optional limit/offset query parameters, raising ValueError."""
+        def parse(name, minimum):
+            raw = params.get(name, [None])[0]
+            if raw is None:
+                return None
+            try:
+                value = int(raw)
+            except ValueError:
+                value = minimum - 1
+            if value < minimum:
+                kind = "positive" if minimum else "non-negative"
+                raise ValueError(f"{name} must be a {kind} integer")
+            return value
+
+        return parse("limit", 1), parse("offset", 0) or 0
+
     def _error(self, status, message):
         self._send_json(status, {"error": message})
 
@@ -67,18 +85,20 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_image(self, name):
-        image = self.images.read(name)
-        if image is None:
+        opened = self.images.open(name)
+        if opened is None:
             return self._error(HTTPStatus.NOT_FOUND, images.ERROR_NOT_FOUND)
-        ctype, body = image
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
-        self.send_header("Cache-Control", "private, max-age=31536000, immutable")
-        self.end_headers()
-        self.wfile.write(body)
+        ctype, size, file = opened
+        with file:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(size))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+            self.send_header("Cache-Control", "private, max-age=31536000, immutable")
+            self.end_headers()
+            while chunk := file.read(images.CHUNK_BYTES):
+                self.wfile.write(chunk)
 
     def _upload_image(self):
         header = self.headers.get("Content-Length")
@@ -96,20 +116,19 @@ class Handler(BaseHTTPRequestHandler):
             # The body is not read; the connection is closed after the response.
             self.close_connection = True
             return self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, images.ERROR_TOO_LARGE)
-        data = self.rfile.read(length) if length else b""
-        if len(data) != length:
-            self.close_connection = True
-            return self._error(HTTPStatus.BAD_REQUEST, "incomplete image upload")
         ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
         try:
-            path = self.images.save(data, ctype)
+            path = self.images.save_stream(self.rfile, length, ctype)
         except ImageError as exc:
+            # The body may not be fully read; close the connection afterwards.
+            self.close_connection = True
             return self._error(exc.status, str(exc))
         except OSError as exc:
             self.log_error("image storage failed: %s", exc)
+            self.close_connection = True
             return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, images.ERROR_STORAGE)
         return self._send_json(
-            HTTPStatus.CREATED, {"path": path, "content_type": ctype, "size": len(data)},
+            HTTPStatus.CREATED, {"path": path, "content_type": ctype, "size": length},
         )
 
     # --- routing -----------------------------------------------------------
@@ -128,7 +147,12 @@ class Handler(BaseHTTPRequestHandler):
                 )
             return self._send_json(HTTPStatus.OK, {"status": "ok"})
         if url.path == "/api/postcards":
-            return self._send_json(HTTPStatus.OK, self.db.list(params.get("q", [None])[0]))
+            try:
+                limit, offset = self._page_params(params)
+                items = self.db.list(params.get("q", [None])[0], limit=limit, offset=offset)
+            except ValueError as exc:
+                return self._error(HTTPStatus.BAD_REQUEST, str(exc))
+            return self._send_json(HTTPStatus.OK, items)
         if url.path.startswith("/api/postcards/by-uuid/"):
             value = url.path[len("/api/postcards/by-uuid/"):]
             try:

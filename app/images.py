@@ -4,6 +4,7 @@ Only raster formats with a recognized file signature are accepted. Stored files
 receive generated names, so client-supplied filenames and paths are never used.
 """
 
+import io
 import os
 import re
 import secrets
@@ -29,6 +30,9 @@ ERROR_UNSUPPORTED_TYPE = "unsupported image type; use PNG, JPEG, GIF or WebP"
 ERROR_INVALID_CONTENT = "image content is not a valid PNG, JPEG, GIF or WebP file"
 ERROR_STORAGE = "image could not be stored"
 ERROR_NOT_FOUND = "image not found"
+ERROR_INCOMPLETE = "incomplete image upload"
+
+CHUNK_BYTES = 1024 * 1024
 
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _BINARY = getattr(os, "O_BINARY", 0)
@@ -74,15 +78,37 @@ class ImageStore:
         return declared
 
     def save(self, data, content_type):
-        """Store a validated image and return its URL path.
+        """Store a validated in-memory image and return its URL path.
 
         Raises ImageError for invalid uploads and OSError for storage failures.
         """
-        extension = self.validate(data, content_type)
+        return self.save_stream(io.BytesIO(data), len(data), content_type)
+
+    def save_stream(self, stream, length, content_type):
+        """Validate and store an image of `length` bytes read from `stream` in chunks.
+
+        The upload is validated before and while it is written, so at most
+        `length` bytes are read and the whole image is never held in memory.
+        Raises ImageError for invalid or incomplete uploads and OSError for
+        storage failures; no partial file remains in either case.
+        """
+        if not length:
+            raise ImageError(400, ERROR_EMPTY)
+        if length > MAX_IMAGE_BYTES:
+            raise ImageError(413, ERROR_TOO_LARGE)
+        declared = CONTENT_TYPES.get(content_type)
+        if declared is None:
+            raise ImageError(415, ERROR_UNSUPPORTED_TYPE)
+        first = stream.read(min(length, CHUNK_BYTES))
+        if detect_extension(first) != declared:
+            # Short reads of valid images also fail the signature check.
+            if len(first) < min(length, CHUNK_BYTES):
+                raise ImageError(400, ERROR_INCOMPLETE)
+            raise ImageError(415, ERROR_INVALID_CONTENT)
         self.root.mkdir(parents=True, exist_ok=True)
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _BINARY
         for _ in range(5):
-            name = f"{secrets.token_hex(16)}.{extension}"
+            name = f"{secrets.token_hex(16)}.{declared}"
             path = self.root / name
             try:
                 fd = os.open(path, flags, 0o644)
@@ -90,7 +116,14 @@ class ImageStore:
                 continue
             try:
                 with os.fdopen(fd, "wb") as file:
-                    file.write(data)
+                    file.write(first)
+                    written = len(first)
+                    while written < length:
+                        chunk = stream.read(min(length - written, CHUNK_BYTES))
+                        if not chunk:
+                            raise ImageError(400, ERROR_INCOMPLETE)
+                        file.write(chunk)
+                        written += len(chunk)
                     file.flush()
                     os.fsync(file.fileno())
             except BaseException:
@@ -99,11 +132,12 @@ class ImageStore:
             return URL_PREFIX + name
         raise FileExistsError("could not generate a unique image name")
 
-    def read(self, name):
-        """Return (content_type, bytes) for a stored image, or None.
+    def open(self, name):
+        """Return (content_type, size, binary file) for a stored image, or None.
 
         Only generated names of regular, non-symlinked files directly inside the
-        store whose content matches the extension are served.
+        store whose leading bytes match the extension's signature are served.
+        The caller must close the returned file.
         """
         if not NAME_PATTERN.fullmatch(name):
             return None
@@ -117,18 +151,33 @@ class ImageStore:
         try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_IMAGE_BYTES:
+                os.close(fd)
                 return None
-            chunks = []
-            remaining = MAX_IMAGE_BYTES + 1
-            while remaining and (chunk := os.read(fd, min(remaining, 1024 * 1024))):
-                chunks.append(chunk)
-                remaining -= len(chunk)
-            data = b"".join(chunks)
+            file = os.fdopen(fd, "rb")
         except OSError:
-            return None
-        finally:
             os.close(fd)
-        extension = name.rsplit(".", 1)[1]
-        if len(data) > MAX_IMAGE_BYTES or detect_extension(data) != extension:
             return None
-        return EXTENSION_TYPES[extension], data
+        try:
+            head = file.read(16)
+            extension = name.rsplit(".", 1)[1]
+            if detect_extension(head) != extension:
+                file.close()
+                return None
+            file.seek(0)
+        except OSError:
+            file.close()
+            return None
+        return EXTENSION_TYPES[extension], info.st_size, file
+
+    def read(self, name):
+        """Return (content_type, bytes) for a stored image, or None."""
+        opened = self.open(name)
+        if opened is None:
+            return None
+        ctype, size, file = opened
+        with file:
+            try:
+                data = file.read(size)
+            except OSError:
+                return None
+        return ctype, data

@@ -534,6 +534,25 @@ their empty paths. Imports reject unknown fields, unsupported versions and inval
 records with actionable errors. Imports are transactional: if any record fails,
 no records in that import are retained.
 
+## Bulk image import
+
+**Import / Export → Bulk image import** creates postcards from several images at
+once when digitizing a collection:
+
+- Select any number of image files. Files named `<base>-front.<ext>` and
+  `<base>-back.<ext>` (also `_front`/`_back`, case-insensitive) with the same
+  base name become one postcard with front and back images. Every other file
+  becomes a postcard with only a front image.
+- Each file uses the normal upload validation (PNG/JPEG/GIF/WebP, matching
+  signature, 20 MiB limit) and receives a generated name.
+- A failed file does not abort the others. The result list reports every
+  created postcard and every failure with its reason; a back image that fails
+  still produces a postcard from its front image. A `-back` file without a
+  matching `-front` file is reported and skipped, because the front image is
+  required.
+- Place, region, year, description and tags can be added afterwards by editing
+  each created postcard.
+
 ## Tests
 
 ```sh

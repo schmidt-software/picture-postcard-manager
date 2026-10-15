@@ -198,6 +198,27 @@ thousand postcards the first page stays fast because only one page is queried
 and rendered (measured locally with 5,000 postcards: ~10 ms for a 100-row page
 versus ~30 ms for the full unpaginated list, before image loading).
 
+### Sorting
+
+A **Sort by** selector above the overview orders the postcards by place, region,
+year or last update, ascending or descending (toggled with a direction button);
+**Newest first** (highest ID first) is the default. Sorting combines with the
+search box, and the selection is stored in the browser's local storage and
+restored on the next visit, like the interface language. Changing the sort key
+or direction resets to the first page; **Show more postcards** continues in the
+selected order, because the server sorts the complete (filtered) result before
+cutting the requested page.
+
+Text fields sort case-insensitively. Free-text `year` values sort by the first
+number they contain (`ca. 1910` and `1910-1915` both sort as 1910, ties by
+text), years without a number sort after numbered ones alphabetically, and
+postcards without a value for the chosen field always come last.
+
+The REST API accepts the same options as
+`GET /api/postcards?sort=<key>&dir=<asc|desc>` with keys `place`, `region`,
+`year` and `updated`, combined freely with `q`, `limit` and `offset`; invalid
+values return HTTP 400, and omitting `sort` keeps the newest-first order.
+
 Previews load lazily from browser-accessible URLs on the application's own
 origin. Missing or unavailable images show a localized fallback instead of a
 broken-image icon. External hosts, `file:` and active-content URLs are not loaded.
@@ -414,7 +435,7 @@ automatically forward host environment variables into the container.
 | Method | Path                         | Description                                   |
 |--------|------------------------------|-----------------------------------------------|
 | GET    | `/api/health`                | Lightweight health check (server and database) |
-| GET    | `/api/postcards?q=<text>&limit=<n>&offset=<n>` | List postcards (searches stored fields; optional pagination) |
+| GET    | `/api/postcards?q=<text>&sort=<key>&dir=<asc\|desc>&limit=<n>&offset=<n>` | List postcards (search, optional sorting and pagination) |
 | POST   | `/api/postcards`             | Create a postcard                             |
 | GET    | `/api/postcards/<id>`        | Get a postcard                                |
 | PUT    | `/api/postcards/<id>`        | Update a postcard                             |

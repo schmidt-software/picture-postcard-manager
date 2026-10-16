@@ -53,7 +53,7 @@ class TagsDatabaseTest(unittest.TestCase):
 
     def test_partial_update_and_clear(self):
         item = self.create(tags=["a", "b"])
-        self.assertEqual(self.db.update(item["id"], {"place": "X"})["tags"], ["a", "b"])
+        self.assertEqual(self.db.update(item["id"], {"year": "1910"})["tags"], ["a", "b"])
         self.assertEqual(self.db.update(item["id"], {"tags": ["c"]})["tags"], ["c"])
         self.assertEqual(self.db.update(item["id"], {"tags": []})["tags"], [])
         with self.assertRaises(ValueError):
@@ -75,7 +75,7 @@ class TagsDatabaseTest(unittest.TestCase):
     def test_roundtrip_and_old_import_versions(self):
         item = self.create(tags=["x, y", "ü"])
         export = self.db.export_data()
-        self.assertEqual(export["schema_version"], 5)
+        self.assertEqual(export["schema_version"], 6)
         self.assertEqual(export["postcards"][0]["tags"], ["x, y", "ü"])
         self.db.import_data(export, "replace")
         self.assertEqual(self.db.get(item["id"]), item)
@@ -108,7 +108,9 @@ class TagsMigrationTest(unittest.TestCase):
             db = Database(path)
             self.addCleanup(db.close)
             item = db.get(3)
-            self.assertEqual((item["tags"], item["place"], item["created_at"]), ([], "P", "c"))
+            # The legacy place/region values become tags during the migration.
+            self.assertEqual((item["tags"], item["created_at"]), (["P", "R"], "c"))
+            self.assertNotIn("place", item)
             self.assertEqual(db.update(3, {"tags": ["new"]})["tags"], ["new"])
             with closing(sqlite3.connect(path)) as conn:
                 self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
@@ -147,7 +149,7 @@ class TagsApiTest(unittest.TestCase):
         self.assertIn("tags", body["error"])
         _, found = self.request("GET", "/api/postcards?q=a%2Cb")
         self.assertEqual([p["id"] for p in found], [item["id"]])
-        _, same = self.request("PUT", f"/api/postcards/{item['id']}", {"place": "P"})
+        _, same = self.request("PUT", f"/api/postcards/{item['id']}", {"year": "1900"})
         self.assertEqual(same["tags"], ["a,b", "ü"])
         _, cleared = self.request("PUT", f"/api/postcards/{item['id']}", {"tags": []})
         self.assertEqual(cleared["tags"], [])

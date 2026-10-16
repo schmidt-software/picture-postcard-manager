@@ -115,14 +115,12 @@ selected filenames and JSON data are never translated or modified.
 
 ## Postcard fields and compatibility
 
-The form stores six canonical fields:
+The form stores four canonical fields:
 
 | Field | Requirement | Description |
 |-------|-------------|-------------|
 | `front_image_path` | Required | Non-empty path or reference to the front image |
 | `back_image_path` | Optional | Path or reference to the back image |
-| `place` | Optional | Place shown on the postcard |
-| `region` | Optional | Region associated with the place |
 | `year` | Optional | Text, allowing approximate dates and ranges |
 | `description` | Optional | Free-form description |
 
@@ -141,15 +139,43 @@ skipped,
 so records without legacy content keep their description unchanged.
 The API rejects `title` and `notes` as unknown fields on create and update.
 
-When opening a database from an earlier schema, startup adds the six fields (schema 1),
+The dedicated `place` and `region` fields were removed in schema version 6
+([#46](https://github.com/schmidt-software/picture-postcard-manager/issues/46));
+location information lives in [tags](#tags) instead. The migration converts
+every non-blank place and region value into a tag using exactly the tag
+editor's rules: surrounding whitespace is trimmed, the trimmed text (including
+any Unicode) is preserved verbatim, empty or whitespace-only values are
+skipped, and exact duplicates are dropped. Existing tags keep their order; the
+place is appended before the region, so a postcard whose place and region are
+equal gains only one tag, and a value that already exists as a tag is not
+added again. De-duplication is **case-sensitive**, matching the tag editor: a
+place `wien` next to an existing tag `Wien` becomes a separate `wien` tag
+rather than being merged. Migrated values remain discoverable through the
+text search and the tag filter. The API rejects `place` and `region` as
+unknown fields on create and update, and the obsolete `place`/`region` sort
+and filter query parameters return the regular HTTP 400 validation error, so
+outdated clients fail loudly instead of silently losing data.
+
+**Downgrading after the schema-6 migration is not supported**: older versions
+reject the newer database. Back up `/data` (database and images, see
+[Complete backup and restore](#complete-backup-and-restore)) before upgrading
+so you can return to the previous version with its matching data if needed.
+
+When opening a database from an earlier schema, startup adds the canonical fields (schema 1),
 the `tags` column (schema 2) and the `uuid` column (schema 4) as needed, merges the
-legacy `title` and `notes` columns into `description` and drops them (schema 5),
+legacy `title` and `notes` columns into `description` (schema 5), converts the
+`place` and `region` columns into tags (schema 6) and drops the obsolete columns,
 all in one transaction, and advances the SQLite `user_version`.
-The legacy columns are removed via a table rebuild (new v5 table, rows copied,
-old table dropped, new one renamed), which works on every SQLite version
+The obsolete columns are removed via a table rebuild (new table with the
+current schema, rows copied, old table dropped, new one renamed), which works
+on every SQLite version
 (`ALTER TABLE ... DROP COLUMN` would require SQLite 3.35+).
-Existing IDs, timestamps, indexes on remaining columns and unrelated data are
-preserved; indexes on the dropped legacy columns are removed with them.
+Existing IDs, UUIDs, timestamps, the AUTOINCREMENT sequence (deleted IDs are
+not reused), indexes on remaining columns and unrelated data are
+preserved; indexes on the dropped columns are removed with them. The
+migration is transactional and idempotent: a failed migration rolls back
+completely and leaves the previous database intact, and reopening an already
+migrated database changes nothing.
 Migrated records without a front image remain available in browse and search;
 they must be given a non-empty `front_image_path` before they can be edited.
 The database migration does not discard legacy data.
@@ -238,9 +264,9 @@ Tags are stored in the `tags` column as a JSON array string (default `[]`).
 
 ## Overview images
 
-The overview shows compact front/back image previews, place, year, tags, ID and the
-last update time. Region and description remain editable and are included in
-storage and JSON exports, but are not shown as overview columns.
+The overview shows compact front/back image previews, year, tags, ID and the
+last update time. Description remains editable and is included in
+storage and JSON exports, but is not shown as an overview column.
 
 ### Thumbnails
 
@@ -270,7 +296,7 @@ image loading).
 
 ### Filters
 
-Dropdowns above the overview narrow the collection by an exact place, region,
+Dropdowns above the overview narrow the collection by an exact
 year or tag; each lists the values that currently exist in the collection.
 Filters combine with each other, with the search box, with sorting and with
 pagination
@@ -285,13 +311,14 @@ because its last postcard was just deleted) remains selectable and simply
 yields an empty result until it is changed or reset.
 
 The REST API accepts the same filters as exact-match query parameters on
-`GET /api/postcards` (`place`, `region`, `year`, `tag`), combinable with `q`,
+`GET /api/postcards` (`year`, `tag`), combinable with `q`,
 `limit` and `offset`. `GET /api/postcards/filters` returns the distinct
-non-empty values for each filterable field.
+non-empty values for each filterable field. The former `place` and `region`
+filter parameters were removed with their fields and now return HTTP 400.
 
 ### Sorting
 
-A **Sort by** selector above the overview orders the postcards by place, region,
+A **Sort by** selector above the overview orders the postcards by
 year or last update, ascending or descending (toggled with a direction button);
 **Newest first** (highest ID first) is the default. Sorting combines with the
 search box and the filters, and the selection is stored in the browser's local storage and
@@ -306,10 +333,11 @@ text), years without a number sort after numbered ones alphabetically, and
 postcards without a value for the chosen field always come last.
 
 The REST API accepts the same options as
-`GET /api/postcards?sort=<key>&dir=<asc|desc>` with keys `place`, `region`,
+`GET /api/postcards?sort=<key>&dir=<asc|desc>` with keys
 `year` and `updated`, combined freely with `q`, the filter parameters, `limit`
 and `offset`; invalid
-values return HTTP 400, and omitting `sort` keeps the newest-first order.
+values - including the removed `place` and `region` keys - return HTTP 400,
+and omitting `sort` keeps the newest-first order.
 
 Previews load lazily from browser-accessible URLs on the application's own
 origin. Missing or unavailable images show a localized fallback instead of a
@@ -320,7 +348,7 @@ stored values are unchanged.
 ## Postcard detail pages and sharing
 
 Click a row in the overview (or focus it and press Enter) to open its detail page.
-Photos are displayed prominently alongside the stored place, region, year,
+Photos are displayed prominently alongside the stored year,
 description and tags; empty optional fields are omitted. Images use the same
 same-origin restrictions and unavailable-image fallbacks as the overview.
 Choose **Edit** to change the postcard, or **Back to overview** to return.
@@ -734,7 +762,7 @@ to `dev`.
 |--------|------------------------------|-----------------------------------------------|
 | GET    | `/api/health`                | Lightweight health check (server and database) |
 | GET    | `/api/version`               | Public version string of the running build (see [Application version](#application-version)) |
-| GET    | `/api/postcards?q=<text>&place=&region=&year=&tag=&sort=<key>&dir=<asc\|desc>&limit=<n>&offset=<n>` | List postcards (search, exact-match filters, optional sorting and pagination) |
+| GET    | `/api/postcards?q=<text>&year=&tag=&sort=<key>&dir=<asc\|desc>&limit=<n>&offset=<n>` | List postcards (search, exact-match filters, optional sorting and pagination) |
 | GET    | `/api/postcards/filters`     | Distinct values for the overview filters      |
 | POST   | `/api/postcards`             | Create a postcard                             |
 | GET    | `/api/postcards/<id>`        | Get a postcard                                |
@@ -786,14 +814,14 @@ logged on the server only).
 
 ### JSON export format
 
-The current export uses schema version 5. Each record includes the six canonical
+The current export uses schema version 6. Each record includes the four canonical
 fields, `tags` (array of strings), and the `id`, `uuid`, `created_at`
 and `updated_at` values.
 
 ```json
 {
   "format": "picture-postcard-manager",
-  "schema_version": 5,
+  "schema_version": 6,
   "exported_at": "2026-01-01T12:00:00+00:00",
   "postcards": [
     {
@@ -801,8 +829,6 @@ and `updated_at` values.
       "uuid": "b962a358-8899-4000-8999-6973bac5d599",
       "front_image_path": "images/front.jpg",
       "back_image_path": "images/back.jpg",
-      "place": "Example place",
-      "region": "Example region",
       "year": "1905",
       "description": "Postcard description",
       "tags": ["Berlin, Mitte", "street view"],
@@ -818,13 +844,19 @@ directory (`PPM_IMAGE_DIR`, by default `data/images`) together with the JSON exp
 or database; uploaded `/images/...` paths only work on an installation that has
 the same image files.
 
-Version-1 to version-4 imports remain supported; records without `tags` import
+Version-1 to version-5 imports remain supported; records without `tags` import
 with an empty tag list, and legacy `title` and `notes` values are merged into
 `description` using the same format as the database migration (title, then
 notes, then description, preserved verbatim and separated by exactly one blank
 line of combined whitespace at each join; empty
-values are skipped). Version-5 exports round-trip exactly and reject `title`
-and `notes` as unknown fields. An invalid `tags`
+values are skipped). Legacy `place` and `region` values in version 1-5
+imports are converted into tags using the same rules as the database
+migration (trimmed, blank values skipped, appended after the record's own
+tags with place before region, exact case-sensitive duplicates dropped).
+Version-6 exports round-trip exactly and reject `title`,
+`notes`, `place` and `region` as unknown fields; payloads without a
+`schema_version` are treated as the current version and reject them too, so
+obsolete fields are never silently discarded. An invalid `tags`
 value fails the whole import (nothing is imported).
 
 Version-1 imports remain supported. Such older records may have no front image
@@ -850,7 +882,7 @@ once when digitizing a collection:
   still produces a postcard from its front image. A `-back` file without a
   matching `-front` file is reported and skipped, because the front image is
   required.
-- Place, region, year, description and tags can be added afterwards by editing
+- Year, description and tags can be added afterwards by editing
   each created postcard.
 
 ## Tests

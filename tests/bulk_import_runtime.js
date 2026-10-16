@@ -143,7 +143,7 @@ async function runTests() {
   console.log("Bulk import runtime checks passed.");
 }
 
-// New postcards may carry the first use of a place/region/year/tag value, so
+// New postcards may carry the first use of a year/tag value, so
 // the filter dropdowns must refresh after a bulk import. Returning to the
 // overview reloads them on entry, but the import runs asynchronously: the
 // user may already be back on the overview when it finishes, so the bulk
@@ -153,7 +153,7 @@ async function refreshTests() {
   const ui = setup();
   const { run, get, context } = ui;
   const flush = () => new Promise(setImmediate);
-  let options = { place: ["Munich"], region: [], year: [], tag: ["street"] };
+  let options = { year: ["1910"], tag: ["street"] };
   let releasePost;
   const postGate = new Promise((resolve) => (releasePost = resolve));
   context.fetch = async (url, opts = {}) => {
@@ -163,8 +163,7 @@ async function refreshTests() {
     }
     if (url === "/api/postcards" && opts.method === "POST") {
       await postGate; // The import finishes only when the test releases it.
-      options = { ...options, place: [...options.place, "Alps"],
-        tag: [...options.tag, "mountain"] };
+      options = { ...options, tag: [...options.tag, "mountain"] };
       return { ok: true, status: 201, json: async () => ({ id: 1 }) };
     }
     return { ok: true, status: 200,
@@ -181,20 +180,18 @@ async function refreshTests() {
   await flush();
   await run('navigate("browse")');
   await flush();
-  assert.deepEqual(values("place"), ["Munich"]);
-  get("filter-place").value = "Munich";
-  await get("filter-place").emit("change");
+  assert.deepEqual(values("tag"), ["street"]);
+  get("filter-tag").value = "street";
+  await get("filter-tag").emit("change");
 
   // The import finishes while the overview is visible: the new values must
   // appear without another navigation, and an active selection survives.
   releasePost();
   await importing;
   await flush();
-  assert.ok(values("place").includes("Alps"),
-    "bulk-imported place must appear in the filter dropdown");
   assert.ok(values("tag").includes("mountain"),
     "bulk-imported tag must appear in the filter dropdown");
-  assert.equal(get("filter-place").value, "Munich",
+  assert.equal(get("filter-tag").value, "street",
     "selection must survive the refresh");
 }
 

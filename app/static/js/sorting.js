@@ -4,7 +4,7 @@ import { $ } from "./dom.js";
 import { translate } from "./i18n.js";
 
 const SORT_STORAGE_KEY = "picture-postcard-manager-sort";
-export const SORT_KEYS = ["place", "region", "year", "updated"];
+export const SORT_KEYS = ["year", "updated"];
 export let currentSort = { key: "", direction: "asc" };
 
 export function loadSavedSort() {

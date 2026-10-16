@@ -52,27 +52,31 @@ async function runTests() {
 
   // A saved sort is restored on startup; invalid saved values fall back.
   const restored = setup();
-  restored.storage.set("picture-postcard-manager-sort", '{"key":"place","direction":"desc"}');
+  restored.storage.set("picture-postcard-manager-sort", '{"key":"updated","direction":"desc"}');
   restored.run("loadSavedSort(); renderSortControls();");
-  assert.equal(restored.get("sort-select").value, "place");
+  assert.equal(restored.get("sort-select").value, "updated");
   assert.equal(restored.get("sort-direction").hidden, false);
   assert.equal(restored.get("sort-direction").textContent, "Descending");
 
-  const invalid = setup();
-  invalid.storage.set("picture-postcard-manager-sort", '{"key":"evil","direction":"desc"}');
-  invalid.run("loadSavedSort(); renderSortControls();");
-  assert.equal(invalid.get("sort-select").value, "");
-  assert.equal(invalid.get("sort-direction").hidden, true);
+  // A sort key saved before place/region were removed falls back to default.
+  for (const key of ["evil", "place", "region"]) {
+    const invalid = setup();
+    invalid.storage.set("picture-postcard-manager-sort",
+      `{"key":"${key}","direction":"desc"}`);
+    invalid.run("loadSavedSort(); renderSortControls();");
+    assert.equal(invalid.get("sort-select").value, "", key);
+    assert.equal(invalid.get("sort-direction").hidden, true, key);
+  }
 
   await raceTests();
 
   console.log("Sorting runtime checks passed.");
 }
 
-function makeItem(id, place) {
+function makeItem(id, year) {
   return {
     id, uuid: "b962a358-8899-4000-8999-6973bac5d599",
-    front_image_path: "", back_image_path: "", place, year: "",
+    front_image_path: "", back_image_path: "", year,
     tags: [], updated_at: "2026-10-04",
   };
 }
@@ -97,20 +101,20 @@ async function raceTests() {
   // A slow response for an old sort must not overwrite a newer one.
   get("sort-select").value = "year";
   await get("sort-select").emit("change");
-  get("sort-select").value = "place";
+  get("sort-select").value = "updated";
   await get("sort-select").emit("change");
   assert.equal(pending.length, 2);
   assert.ok(pending[0].url.includes("sort=year"), pending[0].url);
-  assert.ok(pending[1].url.includes("sort=place"), pending[1].url);
-  pending[1].resolve(page([makeItem(2, "Augsburg")])); // newest finishes first
+  assert.ok(pending[1].url.includes("sort=updated"), pending[1].url);
+  pending[1].resolve(page([makeItem(2, "1920")])); // newest finishes first
   await flush();
-  pending[0].resolve(page([makeItem(1, "Zürich")])); // stale finishes last
+  pending[0].resolve(page([makeItem(1, "1910")])); // stale finishes last
   await flush();
   assert.deepEqual(rowIds(ui), [2], "stale sort response must be dropped");
 
   // An append for the old sort must not extend the new sort's list.
   const pageSize = run("PAGE_SIZE");
-  const fullPage = Array.from({ length: pageSize }, (_, i) => makeItem(1000 - i, "A"));
+  const fullPage = Array.from({ length: pageSize }, (_, i) => makeItem(1000 - i, "1900"));
   const refresh = run("loadList()");
   pending.at(-1).resolve(page(fullPage));
   await refresh;
@@ -121,9 +125,9 @@ async function raceTests() {
   assert.ok(pending.at(-1).url.includes(`offset=${pageSize}`), pending.at(-1).url);
   get("sort-select").value = "year";
   await get("sort-select").emit("change");
-  pending.at(-1).resolve(page([makeItem(3, "B")])); // new sort, first page
+  pending.at(-1).resolve(page([makeItem(3, "1930")])); // new sort, first page
   await flush();
-  pending.at(-2).resolve(page([makeItem(4, "C")])); // stale append arrives late
+  pending.at(-2).resolve(page([makeItem(4, "1940")])); // stale append arrives late
   await staleAppend;
   assert.deepEqual(rowIds(ui), [3], "stale append must not be concatenated");
   assert.equal(get("load-more").hidden, true);
@@ -132,7 +136,7 @@ async function raceTests() {
   get("message").hidden = true;
   const failing = run("loadList()");
   const fresh = run("loadList()");
-  pending.at(-1).resolve(page([makeItem(5, "D")]));
+  pending.at(-1).resolve(page([makeItem(5, "1950")]));
   await fresh;
   pending.at(-2).resolve({ ok: false, status: 500, json: async () => ({ error: "boom" }) });
   await failing;

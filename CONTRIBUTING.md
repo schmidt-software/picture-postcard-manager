@@ -36,3 +36,5 @@
 - Database changes must keep JSON export/import working; bump `schema_version` when the export format changes.
 - Schema history: version 5 removed the legacy `title` and `notes` fields; their content
   is merged into `description` on migration and on imports of versions 1-4 (see the README).
+  Version 6 removed the `place` and `region` fields; their non-blank values become tags
+  on migration and on imports of versions 1-5 (see the README).

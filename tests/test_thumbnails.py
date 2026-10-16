@@ -30,10 +30,12 @@ class ThumbnailTest(unittest.TestCase):
         parser.feed((ROOT / "app/static/index.html").read_text())
         self.assertIn("frontImage", parser.headers)
         self.assertIn("backImage", parser.headers)
-        for key in ("frontImagePath", "backImagePath", "region", "description"):
+        for key in ("frontImagePath", "backImagePath", "place", "region", "description"):
             self.assertNotIn(key, parser.headers)
-        for field in ("front_image_path", "back_image_path", "region", "description"):
+        for field in ("front_image_path", "back_image_path", "description"):
             self.assertIn(field, parser.fields)
+        for field in ("place", "region"):
+            self.assertNotIn(field, parser.fields)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is optional")
     def test_javascript_runtime(self):

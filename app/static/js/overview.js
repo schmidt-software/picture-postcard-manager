@@ -57,7 +57,7 @@ export function renderList() {
     tr.append(idCell);
     tr.append(imagePreview(p.front_image_path, "frontImage"),
       imagePreview(p.back_image_path, "backImage"));
-    for (const field of ["place", "year"]) {
+    for (const field of ["year"]) {
       const td = document.createElement("td");
       td.className = "postcard-value";
       td.textContent = p[field] ?? "";

@@ -206,6 +206,9 @@ class Handler(BaseHTTPRequestHandler):
                 {"Cache-Control": "no-cache"},
             )
         if url.path == "/api/postcards":
+            # Obsolete place/region parameters are forwarded so the database
+            # rejects them with the regular validation error (HTTP 400)
+            # instead of silently ignoring them.
             filters = {name: params[name][0]
                        for name in ("place", "region", "year", "tag") if name in params}
             try:

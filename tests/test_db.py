@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -18,6 +19,40 @@ CREATE TABLE postcards (
 );
 CREATE INDEX postcards_title ON postcards(title);
 """
+
+# The exact table shape of a real schema-5 database (as created by the
+# previous release), including the AUTOINCREMENT sequence and uuid index.
+V5_SCHEMA = """
+CREATE TABLE postcards (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid        TEXT NOT NULL,
+    front_image_path TEXT NOT NULL DEFAULT '',
+    back_image_path TEXT NOT NULL DEFAULT '',
+    place       TEXT NOT NULL DEFAULT '',
+    region      TEXT NOT NULL DEFAULT '',
+    year        TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    tags        TEXT NOT NULL DEFAULT '[]',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE UNIQUE INDEX postcards_uuid ON postcards(uuid);
+PRAGMA user_version = 5;
+"""
+
+
+def make_v5_db(path, rows):
+    """Create a real-shape schema-5 database with (id, place, region, tags) rows."""
+    with closing(sqlite3.connect(path)) as conn, conn:
+        conn.executescript(V5_SCHEMA)
+        for pid, place, region, tags in rows:
+            conn.execute(
+                "INSERT INTO postcards (id, uuid, front_image_path, place, region,"
+                " year, tags, created_at, updated_at)"
+                " VALUES (?, ?, '/front.jpg', ?, ?, '1910', ?, ?, ?)",
+                (pid, f"b962a358-8899-4000-8999-6973bac5d{pid:03d}", place, region,
+                 json.dumps(tags, ensure_ascii=False), f"c{pid}", f"u{pid}"),
+            )
 
 
 class DatabaseTest(unittest.TestCase):
@@ -48,8 +83,8 @@ class DatabaseTest(unittest.TestCase):
                     {"id": 17, "description": "Legacy title\n\nLegacy notes",
                      "created_at": "created", "updated_at": "updated"},
                 )
-                self.assertNotIn("title", legacy)
-                self.assertNotIn("notes", legacy)
+                for field in ("title", "notes", "place", "region"):
+                    self.assertNotIn(field, legacy)
                 for field in POSTCARD_FIELDS:
                     if field != "description":
                         self.assertEqual(legacy[field], "")
@@ -217,8 +252,9 @@ class DatabaseTest(unittest.TestCase):
                 record = db.get(7)
                 self.assertEqual(record["description"], "T\n\nN")
                 self.assertEqual(record["uuid"], "b962a358-8899-4000-8999-6973bac5d597")
-                self.assertEqual(record["place"], "Wien")
-                self.assertEqual(record["tags"], ["alt"])
+                # The legacy place value is migrated into the tags.
+                self.assertEqual(record["tags"], ["alt", "Wien"])
+                self.assertNotIn("place", record)
                 self.assertEqual(record["created_at"], "c7")
                 self.assertEqual(record["updated_at"], "u7")
                 # Deleted ids are not reused after the rebuild.
@@ -288,7 +324,204 @@ class DatabaseTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "front_image_path"):
             db.update(item["id"], {"front_image_path": None})
         self.assertEqual(db.get(item["id"]), item)
-        self.assertEqual(db.update(item["id"], {"place": "Berlin"})["front_image_path"], "/front.jpg")
+        self.assertEqual(db.update(item["id"], {"year": "1910"})["front_image_path"], "/front.jpg")
+
+
+class LocationMigrationTest(unittest.TestCase):
+    """Schema 6: place/region values move into tags via a table rebuild."""
+
+    def migrate(self, rows):
+        """Run the schema-6 migration against a real-shape schema-5 database."""
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        path = Path(self.tmp.name) / "v5.db"
+        make_v5_db(path, rows)
+        db = Database(path)
+        self.addCleanup(db.close)
+        return db, path
+
+    def test_values_become_deduplicated_tags(self):
+        db, path = self.migrate([
+            # place and region are appended after existing tags, place first.
+            (1, "Wien", "Niederösterreich", ["Donau"]),
+            # A value already present as a tag is not duplicated.
+            (2, "Linz", "Oberösterreich", ["Oberösterreich", "Stadt"]),
+            # Equal place and region produce a single tag.
+            (3, "Salzburg", "Salzburg", []),
+            # Tags are case-sensitive: a case variant stays a separate tag.
+            (4, "wien", "", ["Wien"]),
+            # Blank and whitespace-only values do not create tags.
+            (5, "", "   \t\n", ["Keep"]),
+            # Surrounding whitespace is trimmed; inner text is verbatim.
+            (6, "  Zell am See ", "", []),
+            # Unicode values are preserved exactly.
+            (7, "Großglockner ✉", "Kärnten", ["Üni ✉"]),
+        ])
+        expected = {
+            1: ["Donau", "Wien", "Niederösterreich"],
+            2: ["Oberösterreich", "Stadt", "Linz"],
+            3: ["Salzburg"],
+            4: ["Wien", "wien"],
+            5: ["Keep"],
+            6: ["Zell am See"],
+            7: ["Üni ✉", "Großglockner ✉", "Kärnten"],
+        }
+        for pid, tags in expected.items():
+            with self.subTest(id=pid):
+                record = db.get(pid)
+                self.assertEqual(record["tags"], tags)
+                self.assertNotIn("place", record)
+                self.assertNotIn("region", record)
+                # Everything else is preserved.
+                self.assertEqual(record["year"], "1910")
+                self.assertEqual(record["created_at"], f"c{pid}")
+                self.assertEqual(record["updated_at"], f"u{pid}")
+                self.assertEqual(
+                    record["uuid"], f"b962a358-8899-4000-8999-6973bac5d{pid:03d}")
+        # Migrated values are searchable and tag-filterable.
+        self.assertEqual([p["id"] for p in db.list("Zell am")], [6])
+        self.assertEqual([p["id"] for p in db.list(filters={"tag": "Wien"})],
+                         [4, 1])
+        self.assertNotIn("place", db.filter_values())
+        with closing(sqlite3.connect(path)) as conn:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0],
+                             SCHEMA_VERSION)
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(postcards)")]
+            self.assertNotIn("place", columns)
+            self.assertNotIn("region", columns)
+            # The unique uuid index survives the rebuild.
+            self.assertIsNotNone(conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+                " AND name = 'postcards_uuid'").fetchone())
+
+    def test_rebuild_preserves_autoincrement_sequence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "v5.db"
+            make_v5_db(path, [(3, "Wien", "", []), (9, "Graz", "", [])])
+            with closing(sqlite3.connect(path)) as conn, conn:
+                conn.execute("DELETE FROM postcards WHERE id = 9")
+            db = Database(path)
+            self.addCleanup(db.close)
+            # Deleted ids are not reused after the rebuild.
+            self.assertGreater(db.create({"front_image_path": "/new.jpg"})["id"], 9)
+
+    def test_migration_never_uses_drop_column(self):
+        class NoDropColumnConnection(sqlite3.Connection):
+            def execute(self, sql, parameters=()):
+                if "DROP COLUMN" in sql.upper():
+                    raise AssertionError(f"DROP COLUMN must not be used: {sql}")
+                return super().execute(sql, parameters)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "v5.db"
+            make_v5_db(path, [(1, "Wien", "Wien", ["a"])])
+            real_connect = sqlite3.connect
+
+            def connect(*args, **kwargs):
+                kwargs["factory"] = NoDropColumnConnection
+                return real_connect(*args, **kwargs)
+
+            with patch("app.db.sqlite3.connect", side_effect=connect):
+                db = Database(path)
+                self.addCleanup(db.close)
+                self.assertEqual(db.get(1)["tags"], ["a", "Wien"])
+
+    def test_migration_is_idempotent_on_reopen(self):
+        db, path = self.migrate([(1, "Wien", "Tirol", ["x"])])
+        first = db.get(1)
+        db.close()
+        reopened = Database(path)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.get(1), first)
+        self.assertEqual(reopened.get(1)["tags"], ["x", "Wien", "Tirol"])
+
+    def test_unclean_stored_tags_are_normalized(self):
+        """Valid but unclean arrays are normalized with the tag editor's rules."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "v5.db"
+            make_v5_db(path, [(1, "Wien", "", [])])
+            with closing(sqlite3.connect(path)) as conn, conn:
+                conn.execute(
+                    "UPDATE postcards SET tags = ? WHERE id = 1",
+                    ('[" Donau ", "Donau", "Stadt"]',),
+                )
+            db = Database(path)
+            self.addCleanup(db.close)
+            self.assertEqual(db.get(1)["tags"], ["Donau", "Stadt", "Wien"])
+
+    def test_corrupt_stored_tags_roll_back_the_migration(self):
+        """Valid JSON of the wrong shape must fail loudly, never be coerced.
+
+        Iterating a dict would turn it into its keys and a string into its
+        characters; the migration must instead raise and leave the schema-5
+        database completely intact.
+        """
+        corrupt_values = (
+            '{"k": 1}',          # JSON object: list() would yield its keys
+            '"just-string"',      # JSON string: list() would yield characters
+            "null",               # JSON null
+            "7",                  # JSON number
+            '["ok", 5]',          # array with a non-string element
+            '["ok", "  "]',       # array with a blank string
+        )
+        for corrupt in corrupt_values:
+            with self.subTest(tags=corrupt), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "v5.db"
+                make_v5_db(path, [(1, "Wien", "Tirol", ["keep"]),
+                                  (2, "Graz", "", []),
+                                  (9, "Linz", "", [])])
+                with closing(sqlite3.connect(path)) as conn, conn:
+                    conn.execute("DELETE FROM postcards WHERE id = 9")
+                    conn.execute(
+                        "UPDATE postcards SET tags = ? WHERE id = 2", (corrupt,))
+                with self.assertRaisesRegex(
+                        ValueError, r"postcard 2 has corrupt tags; tags must"):
+                    Database(path)
+                with closing(sqlite3.connect(path)) as conn:
+                    # No partial migration: schema, columns, every row and the
+                    # AUTOINCREMENT sequence are exactly as before.
+                    self.assertEqual(
+                        conn.execute("PRAGMA user_version").fetchone()[0], 5)
+                    columns = [row[1] for row in
+                               conn.execute("PRAGMA table_info(postcards)")]
+                    self.assertIn("place", columns)
+                    self.assertIn("region", columns)
+                    self.assertEqual(
+                        conn.execute("SELECT place, region, tags FROM postcards"
+                                     " WHERE id = 1").fetchone(),
+                        ("Wien", "Tirol", '["keep"]'))
+                    self.assertEqual(
+                        conn.execute("SELECT place, region, tags FROM postcards"
+                                     " WHERE id = 2").fetchone(),
+                        ("Graz", "", corrupt))
+                    self.assertEqual(
+                        conn.execute("SELECT seq FROM sqlite_sequence"
+                                     " WHERE name = 'postcards'").fetchone()[0], 9)
+
+    def test_failed_location_migration_rolls_back(self):
+        """A failure during the rebuild leaves the schema-5 database intact."""
+        class FailingConnection(sqlite3.Connection):
+            def execute(self, sql, parameters=()):
+                if sql.startswith("ALTER TABLE postcards_migrated RENAME"):
+                    raise sqlite3.OperationalError("simulated migration failure")
+                return super().execute(sql, parameters)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "v5.db"
+            make_v5_db(path, [(1, "Wien", "Tirol", ["keep"])])
+            failing = sqlite3.connect(path, factory=FailingConnection)
+            with patch("app.db.sqlite3.connect", return_value=failing):
+                with self.assertRaisesRegex(sqlite3.OperationalError,
+                                            "simulated migration failure"):
+                    Database(path)
+            with closing(sqlite3.connect(path)) as conn:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 5)
+                columns = [row[1] for row in conn.execute("PRAGMA table_info(postcards)")]
+                self.assertIn("place", columns)
+                self.assertIn("region", columns)
+                row = conn.execute(
+                    "SELECT place, region, tags FROM postcards WHERE id = 1").fetchone()
+                self.assertEqual(row, ("Wien", "Tirol", '["keep"]'))
 
 
 if __name__ == "__main__":

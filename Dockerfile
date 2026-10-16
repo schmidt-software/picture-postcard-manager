@@ -32,10 +32,18 @@ RUN chmod a+r requirements-optional.txt \
 COPY app ./app
 RUN chmod -R a+rX /srv/app
 
+# Public version string shown in the UI footer (issue #44). Release images
+# bake in the exact release version via --build-arg PPM_VERSION=X.Y.Z (see
+# .github/workflows/release-image.yml); local and untagged builds default to
+# the explicit "dev" marker. Runtime overrides via the PPM_VERSION
+# environment variable are still possible (e.g. in Compose).
+ARG PPM_VERSION=dev
+
 ENV PPM_HOST=0.0.0.0 \
     PPM_PORT=8000 \
     PPM_DB_PATH=/data/postcards.db \
     PPM_IMAGE_DIR=/data/images \
+    PPM_VERSION=$PPM_VERSION \
     PYTHONUNBUFFERED=1
 
 # Run unprivileged. /data is owned by ppm above, so a fresh named volume

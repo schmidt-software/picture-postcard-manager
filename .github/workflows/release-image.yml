@@ -73,6 +73,17 @@ jobs:
           echo "release_commit=$release_commit" >> "$GITHUB_OUTPUT"
         id: release_commit
 
+      # The UI footer shows the running version (issue #44). Strip the "v"
+      # prefix from the validated semver tag (v0.1.0 -> 0.1.0) and pass it
+      # into the image as the PPM_VERSION build argument below. The tag is
+      # only used via env:, never interpolated into the script.
+      - name: Derive application version from release tag
+        id: app_version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
       - name: Set up QEMU (arm64 emulation)
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
@@ -115,6 +126,8 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            PPM_VERSION=${{ steps.app_version.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Registry-stored supply-chain metadata; needs no credentials

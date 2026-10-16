@@ -22,6 +22,26 @@ STATIC_DIR = Path(__file__).parent / "static"
 MAX_BODY_BYTES = 50 * 1024 * 1024
 ITEM_PATH = re.compile(r"^/api/postcards/(\d+)$")
 
+# Fallback shown for local development and untagged builds (issue #44).
+VERSION_FALLBACK = "dev"
+# A public version string is short; anything longer is treated as invalid.
+MAX_VERSION_LENGTH = 100
+
+
+def app_version():
+    """Return the public version string of the running build (issue #44).
+
+    The ``PPM_VERSION`` environment variable is the single authoritative
+    runtime source: release images bake it in from the release tag, Compose
+    and local runs may override it. An unset, blank, overlong or
+    non-printable value falls back to the explicit ``dev`` marker instead of
+    exposing surprising content.
+    """
+    raw = (os.environ.get("PPM_VERSION") or "").strip()
+    if not raw or len(raw) > MAX_VERSION_LENGTH or not raw.isprintable():
+        return VERSION_FALLBACK
+    return raw
+
 
 class Handler(BaseHTTPRequestHandler):
     db: Database = None  # injected by make_server
@@ -178,6 +198,13 @@ class Handler(BaseHTTPRequestHandler):
                     {"status": "error", "error": "database unavailable"},
                 )
             return self._send_json(HTTPStatus.OK, {"status": "ok"})
+        if url.path == "/api/version":
+            # no-cache keeps the footer in sync across deploys: clients may
+            # cache the response but must revalidate before reusing it.
+            return self._send_json(
+                HTTPStatus.OK, {"version": app_version()},
+                {"Cache-Control": "no-cache"},
+            )
         if url.path == "/api/postcards":
             # Obsolete place/region parameters are forwarded so the database
             # rejects them with the regular validation error (HTTP 400)

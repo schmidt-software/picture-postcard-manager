@@ -7,7 +7,7 @@ It runs locally on a single machine or on a server for central access.
 
 - Entry form to create, edit and delete postcards
 - Browse mode with search
-- Image upload for the front and back image paths
+- Image selection with local previews for the front and back image
 - SQLite database for persistence
 - Export of the whole database to JSON and import from JSON (append or replace)
 - English and German interface with a persistent language selector
@@ -124,9 +124,10 @@ The form stores four canonical fields:
 | `year` | Optional | Text, allowing approximate dates and ranges |
 | `description` | Optional | Free-form description |
 
-Image paths can be typed manually or filled by uploading an image (see
-[Image uploads](#image-uploads)); manually entered paths are stored as entered.
-Optional values can be left empty.
+Image paths are internal state: the form fills them by uploading the selected
+images (see [Image selection and uploads](#image-selection-and-uploads)) and
+never displays or edits them as text. Paths from imports or the API are stored
+as provided. Optional values can be left empty.
 
 The legacy `title` and `notes` fields were removed in schema version 5
 ([#23](https://github.com/schmidt-software/picture-postcard-manager/issues/23)).
@@ -180,23 +181,38 @@ Migrated records without a front image remain available in browse and search;
 they must be given a non-empty `front_image_path` before they can be edited.
 The database migration does not discard legacy data.
 
-## Image uploads
+## Image selection and uploads
 
-Next to each image path field, **Choose front image** and **Choose back image**
-open the browser's file picker. The selected file is uploaded to the server, and on
-success only the corresponding path field is set to the stored image's URL, e.g.
-`/images/3f2a…9c.png`. The front image remains required and the back image optional.
-Manual paths can still be entered at any time; typing into a field while its upload
-is running discards that upload's result.
+The form shows one image picker per side instead of path fields. An empty
+picker displays a localized placeholder; clicking, tapping or pressing
+Enter/Space on the focused control opens the browser's file picker. A selected
+file is previewed locally via an object URL (`URL.createObjectURL`) — nothing
+is uploaded yet — and a trash button with a localized accessible label clears
+the selection, its preview and the file input, so the same file can be chosen
+again. Replaced and discarded previews have their object URLs revoked.
+
+When the form is saved, pending selections are uploaded first and on success
+only the corresponding hidden path state is set to the stored image's URL,
+e.g. `/images/3f2a…9c.png`, which the postcard is then saved with. The front
+image remains required and the back image optional. Because uploads happen
+during save, abandoned forms leave no orphaned files; only a save that uploads
+images but then fails to store the postcard can orphan the uploaded files (see
+[cleanup](#cleaning-up-orphaned-images)).
+
+When editing a postcard, stored same-origin images are shown as previews.
+Replacing or removing an image only changes the association when the form is
+saved; stored files are never deleted by the form.
 
 - Supported formats: PNG, JPEG, GIF and WebP. The declared type must match the
   file's signature; SVG and other formats are rejected.
 - Maximum size: 20 MiB (20,971,520 bytes) per image.
 - Stored files get a random generated name; the client's filename and local path
   are never sent or used, and existing files are never overwritten.
-- If an upload fails, the error is shown next to the button and the previous path
-  is kept. Saving is disabled while an upload is running. Results of uploads that
-  finish after the form was switched, reset or cancelled are ignored.
+- If an upload fails during save, the error is shown next to the picker, the
+  selection and preview are kept, and the save is aborted so it can simply be
+  retried; already uploaded files are reused instead of being uploaded again.
+  Saving is disabled while uploads are running. Uploads whose form was
+  switched, reset or cancelled in the meantime never affect the next form.
 - Uploaded files are not deleted automatically when a postcard is deleted or its
   path changed; use the [orphaned-image cleanup](#cleaning-up-orphaned-images)
   command to remove unreferenced files.

@@ -163,10 +163,10 @@ async function runTests() {
 
   const ui = setup();
   const { run, get, postcardForm, importForm, context, requests } = ui;
-  const primary = Object.values(postcardForm.elements).find((el) => el.required);
-  const secondary = Object.values(postcardForm.elements).find((el) =>
-    el.name !== "id" && el !== primary);
-  const validationError = get(primary.attributes["aria-describedby"]);
+  // The required front image lives in a hidden input behind the image picker.
+  const primary = postcardForm.elements.front_image_path;
+  const secondary = postcardForm.elements.description;
+  const validationError = get("front-image-error");
   const requiredMessage = () => run('translate("requiredFrontImage")');
   await new Promise(setImmediate);
   run('applyLanguage("de")');
@@ -202,13 +202,11 @@ async function runTests() {
   await postcardForm.emit("submit");
   assert.equal(requests.length, originalRequests);
   assert.equal(validationError.textContent, requiredMessage());
-  assert.equal(primary.focused, true);
-  assert.equal(primary.attributes["aria-invalid"], "true");
+  assert.equal(get("front-image-control").focused, true);
+  assert.equal(get("front-image-control").attributes["aria-invalid"], "true");
   run('applyLanguage("de")');
   assert.equal(validationError.textContent, requiredMessage());
   primary.value = "  User <text>  ";
-  await primary.emit("input");
-  assert.equal(validationError.hidden, true);
 
   context.fetch = async (url, options) => {
     requests.push({ url, options });

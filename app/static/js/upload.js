@@ -96,6 +96,12 @@ export function endSubmit() {
   if (epoch === submitEpoch) setBusy(false);
 }
 
+// Token for tying async completions to the originating form session: capture
+// it at submit start and bail out of all UI side effects when it is stale.
+export function formEpoch() {
+  return epoch;
+}
+
 function onFileChosen(side) {
   const input = $(`#${side.prefix}-image-file`);
   const file = input.files[0];

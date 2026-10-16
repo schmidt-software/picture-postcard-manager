@@ -543,6 +543,118 @@ async function testDoubleSubmitWithoutImages() {
   assert.equal(ui.context.window.location.hash, "#browse");
 }
 
+// Stale save completions (second re-review finding on PR #53): a save that
+// settles after a newer openForm/reset/navigation finishes server-side but
+// must not message, navigate or mutate the newer form session.
+async function testStaleSaveCompletionIgnored() {
+  const ui = pickerSetup({ holdSaves: true });
+  const { get, saves, uploads } = ui;
+  await flush();
+  ui.run("openForm()");
+  await choose(ui, "front", png("old.png"));
+
+  // Old form: upload resolves, the postcard save is held in flight.
+  const oldSubmit = ui.postcardForm.emit("submit");
+  await flush();
+  uploads[0].resolve(ok({ path: "/images/" + "a".repeat(32) + ".png" }));
+  await flush();
+  assert.equal(saves.length, 1);
+
+  // A fresh form session starts while the old save is still pending.
+  ui.run("openForm()");
+  const hash = ui.context.window.location.hash;
+  get("message").textContent = "";
+  get("message").hidden = true;
+  await choose(ui, "front", png("new.png"));
+  const freshPath = ui.postcardForm.elements.front_image_path.value;
+  const freshPreview = get("front-image-preview").src;
+
+  // (1) Old save resolves: no saved message, no navigation, fresh form intact.
+  saves[0].resolve(ok({ id: 1 }));
+  await oldSubmit;
+  await flush();
+  assert.equal(get("message").textContent, "", "stale success must not message");
+  assert.equal(ui.context.window.location.hash, hash, "stale success must not navigate");
+  assert.equal(ui.postcardForm.elements.front_image_path.value, freshPath);
+  assert.equal(get("front-image-preview").src, freshPreview);
+  assert.equal(get("save").disabled, false, "fresh controls stay enabled");
+  assert.equal(get("front-image-control").disabled, false);
+  assert.equal(ui.postcardForm.attributes["aria-busy"], "false");
+
+  // The fresh form still submits normally afterwards.
+  const freshSubmit = ui.postcardForm.emit("submit");
+  await flush();
+  assert.equal(uploads.length, 2);
+  uploads[1].resolve(ok({ path: "/images/" + "b".repeat(32) + ".png" }));
+  await flush();
+  assert.equal(saves.length, 2);
+  saves[1].resolve(ok({ id: 2 }));
+  await freshSubmit;
+  await flush();
+  assert.equal(get("message").textContent, "Postcard saved.");
+  assert.equal(ui.context.window.location.hash, "#browse");
+}
+
+// (2) A stale save rejection must not render an error in the fresh form.
+async function testStaleSaveRejectionIgnored() {
+  const ui = pickerSetup({ holdSaves: true });
+  const { get, saves, uploads } = ui;
+  await flush();
+  ui.run("openForm()");
+  await choose(ui, "front", png("old.png"));
+  const oldSubmit = ui.postcardForm.emit("submit");
+  await flush();
+  uploads[0].resolve(ok({ path: "/images/" + "a".repeat(32) + ".png" }));
+  await flush();
+  assert.equal(saves.length, 1);
+
+  ui.run("openForm()");
+  const hash = ui.context.window.location.hash;
+  get("message").textContent = "";
+  get("message").hidden = true;
+
+  saves[0].resolve(fail(500, ""));
+  await oldSubmit;
+  await flush();
+  assert.equal(get("message").textContent, "", "stale error must not message");
+  assert.equal(get("message").hidden, true);
+  assert.equal(ui.context.window.location.hash, hash);
+  assert.equal(get("save").disabled, false);
+  assert.equal(ui.postcardForm.attributes["aria-busy"], "false");
+}
+
+// (3) Navigating to another view during the old save: stale resolve and
+// reject can neither redirect nor message.
+async function testStaleSaveAfterNavigationIgnored() {
+  for (const settle of [
+    (save) => save.resolve(ok({ id: 1 })),
+    (save) => save.resolve(fail(500, "")),
+  ]) {
+    const ui = pickerSetup({ holdSaves: true });
+    const { get, saves, uploads } = ui;
+    await flush();
+    ui.run("openForm()");
+    await choose(ui, "front", png());
+    const submit = ui.postcardForm.emit("submit");
+    await flush();
+    uploads[0].resolve(ok({ path: "/images/" + "a".repeat(32) + ".png" }));
+    await flush();
+    assert.equal(saves.length, 1);
+
+    ui.run('navigate("data")');
+    const hash = ui.context.window.location.hash;
+    assert.equal(hash, "#data");
+    get("message").textContent = "";
+    get("message").hidden = true;
+
+    settle(saves[0]);
+    await submit;
+    await flush();
+    assert.equal(ui.context.window.location.hash, hash, "stale settle must not redirect");
+    assert.equal(get("message").textContent, "", "stale settle must not message");
+  }
+}
+
 async function runTests() {
   await testEmptySelectReplaceClearReselect();
   await testValidationAndSubmission();
@@ -553,6 +665,11 @@ async function runTests() {
   await testSubmitTransactionGuard();
   await testSaveRejectionClearsGuard();
   await testDoubleSubmitWithoutImages();
+  // (4) ordinary success and (5) failure+retry on the current epoch are
+  // covered by testValidationAndSubmission and testSaveRejectionClearsGuard.
+  await testStaleSaveCompletionIgnored();
+  await testStaleSaveRejectionIgnored();
+  await testStaleSaveAfterNavigationIgnored();
   console.log("Image picker runtime checks passed.");
 }
 

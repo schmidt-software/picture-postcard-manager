@@ -5,7 +5,7 @@ import { api } from "./api.js";
 import { translate, registerRenderer } from "./i18n.js";
 import { showMessage, showApiError, setValidation } from "./feedback.js";
 import { getTags, setTags, commitTagInput } from "./tags.js";
-import { hasPendingUploads, resetImagePickers, syncImagePickers, commitSelections, validateFrontImage, beginSubmit, endSubmit } from "./upload.js";
+import { hasPendingUploads, resetImagePickers, syncImagePickers, commitSelections, validateFrontImage, beginSubmit, endSubmit, formEpoch } from "./upload.js";
 import { navigate, leavePostcard, showView, currentRouteRequest } from "./routing.js";
 import { getCurrentDetail, dropDetailUnless } from "./detail.js";
 import { deletePostcard } from "./overview.js";
@@ -69,6 +69,10 @@ export function initForm() {
     }
     if (!validateFrontImage()) return;
     if (!beginSubmit()) return;
+    // Ties every async completion to the originating form session: a newer
+    // openForm/reset/navigation bumps the epoch, and a stale save completion
+    // (success or failure) must not message, navigate or touch the new form.
+    const session = formEpoch();
     try {
       commitTagInput();
       // Upload pending selections now; a failure keeps the selection and
@@ -81,13 +85,16 @@ export function initForm() {
       try {
         if (id) await api(`/api/postcards/${id}`, { method: "PUT", body: JSON.stringify(data) });
         else await api("/api/postcards", { method: "POST", body: JSON.stringify(data) });
+        if (formEpoch() !== session) return; // Saved server-side; UI moved on.
         showMessage("saved");
         navigate("browse", { replace: true });
       } catch (err) {
+        if (formEpoch() !== session) return;
         showApiError(err);
       }
     } finally {
-      // Restores the controls unless navigation/reset already took over.
+      // Restores the controls unless navigation/reset already took over
+      // (endSubmit performs its own epoch check).
       endSubmit();
     }
   });

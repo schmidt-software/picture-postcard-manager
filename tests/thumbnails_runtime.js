@@ -15,7 +15,8 @@ async function runTests() {
   }
   const cell = run('imagePreview("/images/front.png", "frontImage")');
   const [fallback, image] = cell.children;
-  assert.equal(image.src, "http://127.0.0.1:8000/images/front.png");
+  // Overview previews request the server-side thumbnail first.
+  assert.equal(image.src, "http://127.0.0.1:8000/images/thumbs/front.png");
   assert.equal(image.alt, "Front image");
   assert.equal(image.loading, "lazy");
   assert.equal(image.width, 96);
@@ -25,10 +26,25 @@ async function runTests() {
   assert.equal(image.hidden, false);
   assert.equal(image.style.visibility, "visible");
   assert.equal(fallback.hidden, true);
+  // A failing thumbnail retries once with the original before falling back.
+  await image.emit("error");
+  assert.equal(image.src, "http://127.0.0.1:8000/images/front.png");
+  assert.equal(image.hidden, false);
   await image.emit("error");
   assert.equal(image.hidden, true);
   assert.equal(fallback.hidden, false);
   assert.equal(fallback.textContent, "Image unavailable");
+
+  // Thumbnail URLs are derived only for direct children of same-origin
+  // /images/; everything else (detail pages, nested paths, other paths)
+  // keeps its original URL.
+  const detail = run('imagePreview("/images/front.png", "frontImage", true)');
+  assert.equal(detail.children.at(-1).src, "http://127.0.0.1:8000/images/front.png");
+  for (const path of ["/images/thumbs/x.png", "/images/", "/static/a.png", "/imagesx/a.png"]) {
+    context.imagePath = path;
+    const other = run('imagePreview(imagePath, "frontImage")');
+    assert.equal(other.children.at(-1).src, `http://127.0.0.1:8000${path}`);
+  }
   const originalQuery = context.document.querySelectorAll;
   context.document.querySelectorAll = (selector) => {
     const staticElements = originalQuery(selector);

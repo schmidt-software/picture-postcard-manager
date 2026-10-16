@@ -6,6 +6,8 @@ on:
   pull_request:
 
 jobs:
+  # Default mode: standard library only. Thumbnail generation is disabled and
+  # must fall back gracefully (the Pillow-dependent tests skip themselves).
   test:
     runs-on: ubuntu-latest
     steps:
@@ -13,4 +15,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - run: python -m unittest discover -s tests -v
+
+  # Optional-dependency mode: with Pillow installed (as in the Docker image),
+  # the thumbnail generation tests run for real.
+  test-with-pillow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements-optional.txt
       - run: python -m unittest discover -s tests -v

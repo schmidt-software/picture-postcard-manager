@@ -1,0 +1,10 @@
+# Optional dependencies. The application runs on the Python standard library
+# alone; nothing here is required. See README "Optional dependencies".
+#
+# Pillow enables server-side thumbnails for the overview (issue #28). Without
+# it, thumbnail URLs transparently serve the original images.
+#
+# Bounded range: >=10 covers all APIs used by app/thumbs.py (Image.open,
+# ImageOps.exif_transpose, thumbnail, MAX_IMAGE_PIXELS); <13 guards against
+# unreviewed future major releases. Tested with Pillow 12.3.0.
+Pillow>=10,<13

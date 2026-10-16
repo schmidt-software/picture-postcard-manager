@@ -14,7 +14,11 @@ It runs locally on a single machine or on a server for central access.
 
 ## Architecture
 
-Deliberately minimal — **no third-party dependencies**:
+Deliberately minimal — **no required third-party dependencies**. The only
+exception is [Pillow](https://pypi.org/project/Pillow/), an **optional
+dependency used solely for overview thumbnails** (see
+[Optional dependencies](#optional-dependencies)); everything else, and the app
+itself, runs on the standard library alone:
 
 | Layer    | Technology                                          |
 |----------|-----------------------------------------------------|
@@ -28,17 +32,19 @@ app/
   server.py        HTTP server, REST API, static file serving
   db.py            SQLite schema and data access
   images.py        Validation and storage of uploaded images
-  cleanup.py       CLI to list or delete orphaned uploaded images
+  thumbs.py        Optional thumbnail cache for overview previews (uses Pillow when installed)
+  cleanup.py       CLI to list or delete orphaned uploaded images and their thumbnails
   static/          Web UI (index.html, app.js, languages.js, style.css)
     js/            Focused ES modules loaded by app.js (no build step):
                    dom, api, i18n, feedback, preview, tags, upload, routing,
                    sorting, filters, detail, overview, form, import, bulk
 tests/             unittest-based API, database and localization tests
 data/              Default local (non-Docker) database and images/ location (git-ignored)
-Dockerfile         Container image for server deployment
+Dockerfile         Container image for server deployment (installs optional deps by default)
 compose.yaml       Docker Compose setup
 compose.proxy.yaml Optional overlay: Caddy reverse proxy with TLS and basic auth
 proxy/Caddyfile    Caddy configuration for the proxy overlay
+requirements-optional.txt  Optional dependencies (Pillow, only for thumbnails)
 ```
 
 The frontend is split into small native ES modules under `app/static/js/`;
@@ -58,6 +64,32 @@ python3 -m app
 ```
 
 Then open <http://127.0.0.1:8000>.
+
+## Optional dependencies
+
+The application needs **no third-party packages**: `python3 -m app` runs on the
+Python standard library alone. There is exactly one optional dependency:
+
+- **Pillow — optional dependency, only for thumbnails.** The standard library
+  cannot decode or resize JPEG, WebP or GIF, so the server-side
+  [overview thumbnails](#overview-images) need an imaging library. When Pillow
+  is not installed, thumbnail generation is simply disabled and thumbnail URLs
+  transparently serve the original images — no errors, no behavior change
+  beyond larger downloads.
+
+Install it only if you want thumbnails outside Docker (use a virtualenv, not
+the system Python):
+
+```sh
+pip install -r requirements-optional.txt
+```
+
+The Docker image installs the optional dependencies **by default**, because a
+server deployment typically serves several clients over a network, where the
+bandwidth savings matter most. Build with
+`docker build --build-arg INSTALL_OPTIONAL=false .` for a
+standard-library-only image. CI runs the test suite in both modes — with and
+without Pillow.
 
 ## Interface language
 
@@ -152,7 +184,7 @@ directory and whose content matches their extension are served under `/images/`.
 
 Deleting a postcard or changing its image path can leave uploaded files behind
 in `PPM_IMAGE_DIR`. The cleanup command lists or removes generated files that no
-postcard references:
+postcard references, including their cached thumbnails:
 
 ```sh
 python3 -m app.cleanup                  # Dry run: list orphaned files only
@@ -176,6 +208,9 @@ Safety rules:
   a query or fragment (`/images/<name>.png?v=1`), percent-encoded names and
   full URLs (`http://host/images/<name>.png`). When a value is ambiguous, the
   file is kept.
+- Cached [thumbnails](#thumbnails) in the `thumbs/` subdirectory follow their
+  originals: a thumbnail is kept exactly while its referenced original exists,
+  and is removed when its original is orphaned or has vanished.
 - Manually added files, other filenames, subdirectories and symlinks are never
   touched. JSON export/import and backups are unaffected; exports reference
   images by path only.
@@ -206,6 +241,25 @@ Tags are stored in the `tags` column as a JSON array string (default `[]`).
 The overview shows compact front/back image previews, place, year, tags, ID and the
 last update time. Region and description remain editable and are included in
 storage and JSON exports, but are not shown as overview columns.
+
+### Thumbnails
+
+Overview previews of uploaded images request `/images/thumbs/<name>` instead of
+the original. When [Pillow](#optional-dependencies) is installed, the server
+answers with a resized thumbnail (at most 400 px on the longest side),
+generated lazily on the first request — so images uploaded before this feature
+get thumbnails too — and cached in a `thumbs/` directory inside
+`PPM_IMAGE_DIR`. Cache files are written atomically (temp file + rename), so
+concurrent requests never see partial files. EXIF orientation is applied,
+animated GIFs use their first frame, and transparent images stay PNG while
+opaque ones become JPEG. Images with more than 64 million pixels are not
+decoded (decompression-bomb protection), and corrupt images never fail the
+request: in both cases, and whenever Pillow is missing, the thumbnail URL
+serves the original image unchanged. Thumbnails are served with the same
+hardening as originals (generated names only, regular non-symlinked files,
+matching content type, `nosniff`, CSP sandbox). Detail pages always use the
+originals. The cache is derived data: it can be regenerated at any time and
+is maintained by the [cleanup command](#cleaning-up-orphaned-images).
 
 The overview loads postcards in pages of 100 rows; **Show more postcards**
 appends the next page. Searching or changing a filter resets to the first
@@ -383,7 +437,10 @@ Restarts, container recreation and image rebuilds keep the volume and its data.
 **JSON export is not a full backup:** it contains records and image paths, but
 no image bytes. A full backup must copy the SQLite database **and** the complete
 image directory together. The commands below archive the whole `/data` volume,
-including any SQLite journal files. Stop the application during backup and
+including any SQLite journal files. The cached thumbnails under
+`images/thumbs/` are derived data: they are regenerated automatically from the
+originals, so they are optional in backups and may be excluded to save space.
+Stop the application during backup and
 restore so the copy is consistent. The one-off `docker compose run` containers
 use the application image (which includes `tar`), do not publish ports and are
 removed afterwards.
@@ -664,7 +721,10 @@ python3 -m unittest discover -s tests -v
 
 Localization tests use only Python's standard library. When Node.js is available,
 they also run JavaScript runtime regression checks; those tests are skipped if
-Node.js is not installed.
+Node.js is not installed. The thumbnail generation tests need the optional
+Pillow dependency and skip themselves when it is not installed; the fallback
+behavior without Pillow is always tested. CI runs the suite both without and
+with Pillow.
 
 ## Contributing
 

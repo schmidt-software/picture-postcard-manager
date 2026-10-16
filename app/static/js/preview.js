@@ -2,6 +2,19 @@
 
 import { translate } from "./i18n.js";
 
+const IMAGES_PREFIX = "/images/";
+const THUMBS_PREFIX = "/images/thumbs/";
+
+// Return the server thumbnail URL for a same-origin /images/ file, or null.
+// Only direct children of /images/ get a thumbnail URL; the server falls back
+// to the original when no thumbnail can be generated (e.g. without Pillow).
+export function thumbnailUrl(url) {
+  if (!url.pathname.startsWith(IMAGES_PREFIX)) return null;
+  const name = url.pathname.slice(IMAGES_PREFIX.length);
+  if (!name || name.includes("/")) return null;
+  return new URL(THUMBS_PREFIX + name, url.href);
+}
+
 export function imagePreview(imagePath, side, fullSize = false) {
   const cell = document.createElement(fullSize ? "figure" : "td");
   if (fullSize) {
@@ -43,11 +56,19 @@ export function imagePreview(imagePath, side, fullSize = false) {
     image.style.visibility = "visible";
     fallback.hidden = true;
   });
+  // Overview previews use the server-side thumbnail of same-origin uploads;
+  // if the thumbnail request fails (e.g. an older server), retry once with
+  // the original before showing the localized fallback text.
+  const thumb = fullSize ? null : thumbnailUrl(url);
   image.addEventListener("error", () => {
+    if (thumb && image.src === thumb.href) {
+      image.src = url.href;
+      return;
+    }
     image.hidden = true;
     fallback.hidden = false;
   });
   cell.append(image);
-  image.src = url.href;
+  image.src = (thumb ?? url).href;
   return cell;
 }

@@ -16,6 +16,16 @@
 - Everything in the repository (code, comments, commit messages, documentation,
   issue/PR texts created by contributors) is written in **English**.
 - Keep the architecture minimal: no third-party dependencies unless clearly necessary.
+  One deliberate exception exists: **Pillow is an optional dependency, only for
+  thumbnails** (issue #28). The standard library cannot decode or resize JPEG,
+  WebP or GIF, so overview thumbnails need an imaging library. The app must
+  always run and pass the default test suite without Pillow — when it is not
+  installed, thumbnail generation is disabled and thumbnail URLs serve the
+  original images unchanged. Optional dependencies live in
+  `requirements-optional.txt`; the Docker image installs them by default and CI
+  tests both modes. Code must never require Pillow at import time (`app/thumbs.py`
+  guards the import), and Pillow-dependent tests must skip themselves cleanly
+  via `unittest.skipUnless`.
 - The frontend ES modules under `app/static/js/` must keep an acyclic import
   graph (checked by `tests/cycles_check.js` via `tests/test_modules.py`). Put
   shared primitives in leaf modules and pass callbacks (e.g. route handlers

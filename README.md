@@ -209,7 +209,8 @@ pagination
 clears them all. The selection is stored in the browser's local storage and
 restored on reload, like the interface language. The dropdowns refresh
 whenever the collection changes — after saving, deleting (also directly in
-the overview), or importing — so they always list only existing values. A
+the overview), importing a JSON file, or a bulk image import — so they always
+list only existing values. A
 selected or restored value that no postcard offers anymore (for example
 because its last postcard was just deleted) remains selectable and simply
 yields an empty result until it is changed or reset.

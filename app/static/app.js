@@ -1030,6 +1030,14 @@ $("#bulk-form").addEventListener("submit", async (e) => {
     }));
     $("#bulk-files").value = "";
     renderBulkFileCount();
+    // Created postcards may introduce new filter values. Returning to the
+    // overview reloads the dropdowns on entry (showView), but the user may
+    // already have navigated back while the import was still running, so the
+    // dropdowns and the list are refreshed here as well. An active selection
+    // stays selectable (see renderFilterOptions).
+    if (created && !$("#view-browse").hidden) {
+      await Promise.all([loadFilterOptions(), loadList()]);
+    }
   } finally {
     bulkRunning = false;
     $("#bulk-start").disabled = false;

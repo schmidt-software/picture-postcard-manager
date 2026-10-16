@@ -138,7 +138,64 @@ async function runTests() {
   assert.match(listUrl, /limit=\d+/);
   assert.match(listUrl, /offset=0/);
 
+  await refreshTests();
+
   console.log("Bulk import runtime checks passed.");
+}
+
+// New postcards may carry the first use of a place/region/year/tag value, so
+// the filter dropdowns must refresh after a bulk import. Returning to the
+// overview reloads them on entry, but the import runs asynchronously: the
+// user may already be back on the overview when it finishes, so the bulk
+// handler refreshes the dropdowns and the list itself. Without that refresh
+// in the submit handler every check below the release fails.
+async function refreshTests() {
+  const ui = setup();
+  const { run, get, context } = ui;
+  const flush = () => new Promise(setImmediate);
+  let options = { place: ["Munich"], region: [], year: [], tag: ["street"] };
+  let releasePost;
+  const postGate = new Promise((resolve) => (releasePost = resolve));
+  context.fetch = async (url, opts = {}) => {
+    if (url === "/api/images") {
+      return { ok: true, status: 201,
+        json: async () => ({ path: `/images/${"b".repeat(32)}.jpg` }) };
+    }
+    if (url === "/api/postcards" && opts.method === "POST") {
+      await postGate; // The import finishes only when the test releases it.
+      options = { ...options, place: [...options.place, "Alps"],
+        tag: [...options.tag, "mountain"] };
+      return { ok: true, status: 201, json: async () => ({ id: 1 }) };
+    }
+    return { ok: true, status: 200,
+      json: async () => (url === "/api/postcards/filters" ? options : []) };
+  };
+  const values = (key) =>
+    get(`filter-${key}`).children.map((option) => option.textContent).slice(1);
+
+  // Start a bulk import on the data view, then return to the overview while
+  // the import is still running: the dropdowns load before the postcard exists.
+  await run('navigate("data")');
+  get("bulk-files").files = [file("alps.jpg")];
+  const importing = get("bulk-form").emit("submit");
+  await flush();
+  await run('navigate("browse")');
+  await flush();
+  assert.deepEqual(values("place"), ["Munich"]);
+  get("filter-place").value = "Munich";
+  await get("filter-place").emit("change");
+
+  // The import finishes while the overview is visible: the new values must
+  // appear without another navigation, and an active selection survives.
+  releasePost();
+  await importing;
+  await flush();
+  assert.ok(values("place").includes("Alps"),
+    "bulk-imported place must appear in the filter dropdown");
+  assert.ok(values("tag").includes("mountain"),
+    "bulk-imported tag must appear in the filter dropdown");
+  assert.equal(get("filter-place").value, "Munich",
+    "selection must survive the refresh");
 }
 
 runTests().catch((error) => {

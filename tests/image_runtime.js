@@ -34,7 +34,7 @@ function trackObjectUrls(ui) {
   return { created, revoked };
 }
 
-function pickerSetup() {
+function pickerSetup({ holdSaves = false } = {}) {
   const uploads = [];
   const saves = [];
   const ui = setup(null, false, {
@@ -45,6 +45,11 @@ function pickerSetup() {
         return upload.promise;
       }
       if (url.startsWith("/api/postcards") && ["POST", "PUT"].includes(options?.method)) {
+        if (holdSaves) {
+          const save = { url, options, ...deferred() };
+          saves.push(save);
+          return save.promise;
+        }
         saves.push({ url, options });
         return ok(JSON.parse(options.body), options.method === "POST" ? 201 : 200);
       }
@@ -424,6 +429,120 @@ async function testLocalizationAndAria() {
   }
 }
 
+// The submit transaction guard (review finding on PR #53): a second submit
+// must be a no-op at EVERY point of the transaction — during uploads, in the
+// window after uploads settle, and while the postcard save is in flight.
+async function testSubmitTransactionGuard() {
+  const ui = pickerSetup({ holdSaves: true });
+  const { get, saves, uploads } = ui;
+  await flush();
+  ui.run("openForm()");
+  await choose(ui, "front", png("front.png"));
+
+  // First submit: upload starts, transaction busy state is on.
+  const submit = ui.postcardForm.emit("submit");
+  await flush();
+  assert.equal(uploads.length, 1);
+  assert.equal(ui.postcardForm.attributes["aria-busy"], "true");
+
+  // Let the upload finish so the save request goes out, then hold the save.
+  uploads[0].resolve(ok({ path: "/images/" + "a".repeat(32) + ".png" }));
+  await flush();
+  assert.equal(saves.length, 1, "save must start after the upload");
+
+  // Programmatic double submit while the save is in flight (disabled DOM
+  // controls would not stop this): must be a complete no-op.
+  const requestCount = ui.requests.length;
+  await ui.postcardForm.emit("submit");
+  await ui.postcardForm.emit("submit");
+  await flush();
+  assert.equal(uploads.length, 1, "each file must be uploaded exactly once");
+  assert.equal(saves.length, 1, "in-flight save must block further saves");
+  assert.equal(ui.requests.length, requestCount);
+  assert.equal(get("message").textContent,
+    "Error: Please wait until the image upload has finished.");
+
+  // Busy state covers the whole transaction until the save settles.
+  assert.equal(ui.postcardForm.attributes["aria-busy"], "true");
+  assert.equal(get("save").disabled, true);
+  assert.equal(get("front-image-control").disabled, true);
+  assert.equal(get("front-image-clear").disabled, true);
+
+  // Picker interactions are state-guarded too, not only DOM-disabled.
+  await choose(ui, "front", png("sneaky.png"));
+  assert.equal(get("front-image-preview").src, "blob:mock-1", "selection must not change");
+  await get("front-image-clear").emit("click");
+  assert.equal(ui.postcardForm.elements.front_image_path.value,
+    "/images/" + "a".repeat(32) + ".png", "clear must be a no-op while submitting");
+
+  saves[0].resolve(ok({ id: 1 }));
+  await submit;
+  await flush();
+  assert.equal(saves.length, 1);
+  assert.equal(ui.context.window.location.hash, "#browse");
+
+  // After success the guard is released for the next form.
+  ui.run("openForm()");
+  assert.equal(ui.postcardForm.attributes["aria-busy"], "false");
+  assert.equal(get("save").disabled, false);
+}
+
+// Save rejection must clear the guard/busy state and allow exactly one
+// successful retry without re-uploading the already-uploaded file.
+async function testSaveRejectionClearsGuard() {
+  const ui = pickerSetup({ holdSaves: true });
+  const { get, saves, uploads } = ui;
+  await flush();
+  ui.run("openForm()");
+  await choose(ui, "front", png("front.png"));
+
+  let submit = ui.postcardForm.emit("submit");
+  await flush();
+  uploads[0].resolve(ok({ path: "/images/" + "a".repeat(32) + ".png" }));
+  await flush();
+  assert.equal(saves.length, 1);
+  saves[0].resolve(fail(500, ""));
+  await submit;
+  await flush();
+  assert.equal(ui.postcardForm.attributes["aria-busy"], "false",
+    "busy state must be restored after a failed save");
+  assert.equal(get("save").disabled, false);
+  assert.equal(get("front-image-control").disabled, false);
+  assert.equal(get("front-image-preview").src, "blob:mock-1", "preview survives the failure");
+
+  // Retry: one new save, no duplicate upload of the already-stored image.
+  submit = ui.postcardForm.emit("submit");
+  await flush();
+  assert.equal(uploads.length, 1, "already uploaded file must not be re-uploaded");
+  assert.equal(saves.length, 2);
+  saves[1].resolve(ok({ id: 1 }));
+  await submit;
+  await flush();
+  assert.equal(JSON.parse(saves[1].options.body).front_image_path,
+    "/images/" + "a".repeat(32) + ".png");
+  assert.equal(ui.context.window.location.hash, "#browse");
+}
+
+// Programmatic double submit without pending images: still exactly one save.
+async function testDoubleSubmitWithoutImages() {
+  const ui = pickerSetup({ holdSaves: true });
+  const { saves, uploads } = ui;
+  await flush();
+  ui.run("openForm({id: 7, front_image_path: '/images/front.png'})");
+
+  const first = ui.postcardForm.emit("submit");
+  const second = ui.postcardForm.emit("submit");
+  await flush();
+  assert.equal(uploads.length, 0);
+  assert.equal(saves.length, 1, "double submit must produce exactly one save");
+  assert.equal(ui.postcardForm.attributes["aria-busy"], "true");
+  saves[0].resolve(ok({ id: 7 }, 200));
+  await Promise.all([first, second]);
+  await flush();
+  assert.equal(saves.length, 1);
+  assert.equal(ui.context.window.location.hash, "#browse");
+}
+
 async function runTests() {
   await testEmptySelectReplaceClearReselect();
   await testValidationAndSubmission();
@@ -431,6 +550,9 @@ async function runTests() {
   await testEditMode();
   await testResetNavigationAndStaleUploads();
   await testLocalizationAndAria();
+  await testSubmitTransactionGuard();
+  await testSaveRejectionClearsGuard();
+  await testDoubleSubmitWithoutImages();
   console.log("Image picker runtime checks passed.");
 }
 

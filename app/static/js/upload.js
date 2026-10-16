@@ -26,12 +26,16 @@ const sides = [
 // Bumped by resetImagePickers(); a save workflow awaiting an upload aborts
 // when its epoch is no longer current (form switched, reset or cancelled).
 let epoch = 0;
-let uploading = false;
+// True for the whole submit transaction (validation, uploads, postcard save);
+// see beginSubmit()/endSubmit(). Guards against double submits and picker
+// interactions in handler state, not only via disabled DOM controls.
+let submitting = false;
+let submitEpoch = -1;
 
 const hiddenInput = (side) => $("#postcard-form").elements[side.field];
 
 export function hasPendingUploads() {
-  return uploading;
+  return submitting;
 }
 
 function renderStatus(side) {
@@ -65,8 +69,8 @@ function render(side) {
   renderStatus(side);
 }
 
-function setUploading(flag) {
-  uploading = flag;
+function setBusy(flag) {
+  submitting = flag;
   for (const side of sides) {
     $(`#${side.prefix}-image-control`).disabled = flag;
     $(`#${side.prefix}-image-clear`).disabled = flag;
@@ -75,12 +79,29 @@ function setUploading(flag) {
   $("#postcard-form").setAttribute("aria-busy", String(flag));
 }
 
+// Marks the start of a submit transaction. Returns false when one is already
+// running (double submit), making the second submit a no-op in the caller.
+export function beginSubmit() {
+  if (submitting) return false;
+  submitEpoch = epoch;
+  setBusy(true);
+  return true;
+}
+
+// Ends the transaction and restores the controls — unless the form was
+// switched, reset or cancelled meanwhile (epoch changed): then
+// resetImagePickers() already restored the state for the next form and a late
+// endSubmit() must not touch it.
+export function endSubmit() {
+  if (epoch === submitEpoch) setBusy(false);
+}
+
 function onFileChosen(side) {
   const input = $(`#${side.prefix}-image-file`);
   const file = input.files[0];
   // Clearing the input lets the same file fire another change event later.
   input.value = "";
-  if (!file) return;
+  if (!file || submitting) return;
   let errorKey = null;
   if (!file.size) errorKey = "errorImageEmpty";
   else if (file.size > MAX_IMAGE_BYTES) errorKey = "errorImageTooLarge";
@@ -103,6 +124,7 @@ function onFileChosen(side) {
 // stored image is only dissociated when the form is saved afterwards; the
 // stored file itself is never deleted here.
 function clearSide(side) {
+  if (submitting) return;
   if (side.selection) {
     URL.revokeObjectURL(side.selection.objectUrl);
     side.selection = null;
@@ -129,39 +151,36 @@ export function validateFrontImage() {
 // Uploads the pending selections and writes the returned stored paths into
 // the hidden fields. Returns false when an upload failed or the form was
 // switched meanwhile; the selection and its preview stay intact for a retry.
+// Runs inside the submit transaction: beginSubmit() already disabled the
+// controls and endSubmit() restores them after the save settles.
 export async function commitSelections() {
   const current = epoch;
-  setUploading(true);
-  try {
-    for (const side of sides) {
-      if (!side.selection || side.selection.uploadedPath) continue;
-      side.status = { key: "imageUploading" };
-      renderStatus(side);
-      const file = side.selection.file;
-      let result;
-      try {
-        result = await api("/api/images", {
-          method: "POST", headers: { "Content-Type": file.type }, body: file,
-        });
-        if (typeof result?.path !== "string" || !result.path) throw new Error("");
-      } catch (error) {
-        if (epoch !== current) return false;
-        side.status = { raw: error?.message || "", error: true };
-        renderStatus(side);
-        return false;
-      }
+  for (const side of sides) {
+    if (!side.selection || side.selection.uploadedPath) continue;
+    side.status = { key: "imageUploading" };
+    renderStatus(side);
+    const file = side.selection.file;
+    let result;
+    try {
+      result = await api("/api/images", {
+        method: "POST", headers: { "Content-Type": file.type }, body: file,
+      });
+      if (typeof result?.path !== "string" || !result.path) throw new Error("");
+    } catch (error) {
       if (epoch !== current) return false;
-      side.selection.uploadedPath = result.path;
-      side.status = { key: "imageUploaded" };
+      side.status = { raw: error?.message || "", error: true };
       renderStatus(side);
+      return false;
     }
-    for (const side of sides) {
-      if (side.selection) hiddenInput(side).value = side.selection.uploadedPath;
-    }
-    return true;
-  } finally {
-    if (epoch === current) setUploading(false);
+    if (epoch !== current) return false;
+    side.selection.uploadedPath = result.path;
+    side.status = { key: "imageUploaded" };
+    renderStatus(side);
   }
+  for (const side of sides) {
+    if (side.selection) hiddenInput(side).value = side.selection.uploadedPath;
+  }
+  return true;
 }
 
 // Drops all selections, revokes their object URLs and re-enables the form.
@@ -178,7 +197,7 @@ export function resetImagePickers() {
     // Discard the path state too; openForm refills it for the next form.
     hiddenInput(side).value = "";
   }
-  setUploading(false);
+  setBusy(false);
   syncImagePickers();
 }
 

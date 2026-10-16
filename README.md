@@ -695,17 +695,45 @@ same.
 | `PPM_PORT`    | `8000`               | Port to listen on        |
 | `PPM_DB_PATH` | `data/postcards.db`  | Path to the SQLite file  |
 | `PPM_IMAGE_DIR` | `images` next to the database file | Directory for uploaded images (created at startup) |
+| `PPM_VERSION` | `dev` | Public version string shown in the UI footer (see [Application version](#application-version)) |
 
 The Dockerfile sets `PPM_HOST=0.0.0.0`, `PPM_PORT=8000`,
 `PPM_DB_PATH=/data/postcards.db` and `PPM_IMAGE_DIR=/data/images`.
 Compose uses the host's `PPM_PORT` only for port publishing; it does not
 automatically forward host environment variables into the container.
 
+## Application version
+
+Every page shows the running application version in a shared footer, e.g.
+`Version 0.1.0` (issue #44). The value has a **single authoritative runtime
+source**: the server reads the `PPM_VERSION` environment variable and exposes
+it via `GET /api/version`; the frontend fetches it once at startup and renders
+it as plain text (safely escaped, localized label). The endpoint responds with
+`Cache-Control: no-cache`, so the footer never shows a stale version after a
+deploy. Only the public version string is exposed — no commit hashes or other
+operational details.
+
+How the version is supplied:
+
+- **Local runs** (`python3 -m app`): unset by default, the footer shows the
+  explicit `dev` fallback. Override with `PPM_VERSION=0.1.0 python3 -m app`.
+- **Docker Compose** (local build): the `PPM_VERSION` build argument defaults
+  to `dev`; override with `PPM_VERSION=0.1.0 docker compose up -d --build` or
+  an `.env` entry, or set it as a runtime environment variable.
+- **Release images** (GHCR): the release workflow derives the version from the
+  release tag (`v0.1.0` → `0.1.0`) and bakes it into the image as the
+  `PPM_VERSION` environment variable, so the published image displays its
+  release version without any configuration or runtime file rewriting.
+
+Blank, overlong (more than 100 characters) or non-printable values fall back
+to `dev`.
+
 ## REST API
 
 | Method | Path                         | Description                                   |
 |--------|------------------------------|-----------------------------------------------|
 | GET    | `/api/health`                | Lightweight health check (server and database) |
+| GET    | `/api/version`               | Public version string of the running build (see [Application version](#application-version)) |
 | GET    | `/api/postcards?q=<text>&place=&region=&year=&tag=&sort=<key>&dir=<asc\|desc>&limit=<n>&offset=<n>` | List postcards (search, exact-match filters, optional sorting and pagination) |
 | GET    | `/api/postcards/filters`     | Distinct values for the overview filters      |
 | POST   | `/api/postcards`             | Create a postcard                             |

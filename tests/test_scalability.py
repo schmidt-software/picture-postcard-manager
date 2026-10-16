@@ -24,7 +24,7 @@ class PaginationDbTest(unittest.TestCase):
         self.addCleanup(self.db.close)
         for index in range(1, 6):
             self.db.create({"front_image_path": f"/front-{index}.jpg",
-                            "place": "Berlin" if index % 2 else "Munich"})
+                            "description": "Berlin" if index % 2 else "Munich"})
 
     def test_list_without_pagination_is_unchanged(self):
         items = self.db.list()

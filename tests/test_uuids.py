@@ -23,8 +23,7 @@ class UuidTest(unittest.TestCase):
     def create(self):
         return self.db.create({
             "front_image_path": "/images/front.png", "back_image_path": "/images/back.png",
-            "place": "Berlin", "region": "Berlin", "year": "1900",
-            "description": "Keep this", "tags": ["a", "b"],
+            "year": "1900", "description": "Keep this", "tags": ["a", "b"],
         })
 
     def test_random_unique_stable_and_immutable(self):
@@ -35,7 +34,7 @@ class UuidTest(unittest.TestCase):
             self.assertEqual(str(UUID(item["uuid"])), item["uuid"])
             self.assertEqual(self.db.get_by_uuid(item["uuid"]), item)
         item = records[0]
-        updated = self.db.update(item["id"], {"place": "Changed"})
+        updated = self.db.update(item["id"], {"year": "1901"})
         self.assertEqual(updated["uuid"], item["uuid"])
         with self.assertRaisesRegex(ValueError, "cannot be changed"):
             self.db.update(item["id"], {"uuid": str(uuid4())})
@@ -46,7 +45,7 @@ class UuidTest(unittest.TestCase):
     def test_restore_keeps_links_append_generates_new_identifiers(self):
         original = self.create()
         export = self.db.export_data()
-        self.assertEqual(export["schema_version"], 5)
+        self.assertEqual(export["schema_version"], 6)
         self.db.import_data(export, "replace")
         self.assertEqual(self.db.get_by_uuid(original["uuid"]), original)
         self.db.import_data(export, "append")
@@ -173,9 +172,9 @@ class UuidApiTest(unittest.TestCase):
                 self.assertEqual(request(path), (200, postcard))
                 self.assertEqual(request("/api/postcards/by-uuid/42")[0], 400)
                 self.assertEqual(request(f"/api/postcards/by-uuid/{uuid4()}")[0], 404)
-                status, updated = request(f"/api/postcards/{postcard['id']}", "PUT", {"place": "X"})
+                status, updated = request(f"/api/postcards/{postcard['id']}", "PUT", {"year": "1912"})
                 self.assertEqual((status, updated["uuid"]), (200, postcard["uuid"]))
-                self.assertEqual(request(path)[1]["place"], "X")
+                self.assertEqual(request(path)[1]["year"], "1912")
             finally:
                 server.shutdown()
                 server.server_close()

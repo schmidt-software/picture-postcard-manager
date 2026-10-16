@@ -13,22 +13,23 @@ import threading
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-SCHEMA_VERSION = 5
-IMPORT_VERSIONS = (1, 2, 3, 4, 5)
+SCHEMA_VERSION = 6
+IMPORT_VERSIONS = (1, 2, 3, 4, 5, 6)
 
 POSTCARD_FIELDS = (
-    "front_image_path", "back_image_path", "place", "region", "year", "description",
+    "front_image_path", "back_image_path", "year", "description",
 )
 # Legacy columns removed in schema 5; their content is merged into description.
 LEGACY_FIELDS = ("title", "notes")
+# Location columns removed in schema 6; non-blank values become tags.
+LOCATION_FIELDS = ("place", "region")
 TEXT_FIELDS = POSTCARD_FIELDS
 EDITABLE_FIELDS = (*TEXT_FIELDS, "tags")
 RECORD_FIELDS = (*EDITABLE_FIELDS, "id", "uuid", "created_at", "updated_at")
 # User-selectable overview sort keys -> record fields.
-SORT_FIELDS = {"place": "place", "region": "region", "year": "year",
-               "updated": "updated_at"}
+SORT_FIELDS = {"year": "year", "updated": "updated_at"}
 # Fields the overview can filter by exact value; "tag" matches a single tag.
-FILTER_FIELDS = ("place", "region", "year")
+FILTER_FIELDS = ("year",)
 
 SCHEMA_TEMPLATE = """
 CREATE TABLE IF NOT EXISTS {table} (
@@ -36,8 +37,6 @@ CREATE TABLE IF NOT EXISTS {table} (
     uuid        TEXT NOT NULL,
     front_image_path TEXT NOT NULL DEFAULT '',
     back_image_path TEXT NOT NULL DEFAULT '',
-    place       TEXT NOT NULL DEFAULT '',
-    region      TEXT NOT NULL DEFAULT '',
     year        TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
     tags        TEXT NOT NULL DEFAULT '[]',
@@ -152,7 +151,9 @@ class Database:
                 conn.execute(
                     "CREATE UNIQUE INDEX IF NOT EXISTS postcards_uuid ON postcards(uuid)"
                 )
-                self._drop_legacy_columns(conn, columns)
+                self._merge_legacy_columns(conn, columns)
+                self._merge_location_columns(conn, columns)
+                self._drop_obsolete_columns(conn, columns)
                 conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         except (sqlite3.Error, ValueError):
             self.close()
@@ -229,17 +230,11 @@ class Database:
         with self._write_lock():
             conn.execute("SELECT 1").fetchone()
 
-    def _drop_legacy_columns(self, conn, columns):
-        """Schema 5: merge legacy title/notes into description, then drop them.
+    def _merge_legacy_columns(self, conn, columns):
+        """Schema 5: merge legacy title/notes values into description.
 
-        SQLite only supports ``ALTER TABLE ... DROP COLUMN`` from version
-        3.35, so the table is always rebuilt instead (one code path for all
-        SQLite versions): a new table with the v5 schema is created, all rows
-        are copied with their ids, uuids, timestamps and tags, the old table
-        is dropped, the new one is renamed, and indexes that do not reference
-        a legacy column are recreated. Runs on the explicit migration
-        connection, inside the startup migration transaction, so a failure
-        rolls everything back.
+        Runs inside the startup migration transaction; the obsolete columns
+        themselves are removed by _drop_obsolete_columns afterwards.
         """
         legacy = [field for field in LEGACY_FIELDS if field in columns]
         if not legacy:
@@ -256,6 +251,57 @@ class Database:
                     "UPDATE postcards SET description = ? WHERE id = ?",
                     (merged, row["id"]),
                 )
+
+    def _merge_location_columns(self, conn, columns):
+        """Schema 6: convert non-blank place/region values into tags.
+
+        Each value follows exactly the tag editor's rules (see _clean_tags):
+        surrounding whitespace is trimmed, empty or whitespace-only values
+        are skipped, the trimmed text is preserved verbatim (including any
+        Unicode), and exact duplicates are dropped case-sensitively. A place
+        that already exists as a tag is not added again, while a value that
+        differs only in case ("wien" next to the tag "Wien") stays a
+        distinct tag, consistent with the case-sensitive tag editor.
+        Existing tags keep their order; the place is appended before the
+        region, so equal place and region values produce a single tag.
+        Runs inside the startup migration transaction; the obsolete columns
+        themselves are removed by _drop_obsolete_columns afterwards.
+        """
+        present = [field for field in LOCATION_FIELDS if field in columns]
+        if not present:
+            return
+        selected = ", ".join(("id", "tags", *present))
+        for row in conn.execute(f"SELECT {selected} FROM postcards").fetchall():
+            tags = json.loads(row["tags"])
+            merged = list(tags)
+            for field in present:
+                value = (row[field] or "").strip()
+                if value and value not in merged:
+                    merged.append(value)
+            if merged != tags:
+                conn.execute(
+                    "UPDATE postcards SET tags = ? WHERE id = ?",
+                    (json.dumps(merged, ensure_ascii=False), row["id"]),
+                )
+
+    def _drop_obsolete_columns(self, conn, columns):
+        """Drop the obsolete legacy and location columns via a table rebuild.
+
+        SQLite only supports ``ALTER TABLE ... DROP COLUMN`` from version
+        3.35, so the table is always rebuilt instead (one code path for all
+        SQLite versions): a new table with the current schema is created, all
+        rows are copied with their ids, uuids, timestamps and tags, the old
+        table is dropped, the new one is renamed, and indexes that do not
+        reference an obsolete column are recreated. The AUTOINCREMENT
+        high-water mark in sqlite_sequence is preserved so ids of previously
+        deleted rows are not reused. Runs on the explicit migration
+        connection, inside the startup migration transaction, so a failure
+        rolls everything back.
+        """
+        obsolete = [field for field in (*LEGACY_FIELDS, *LOCATION_FIELDS)
+                    if field in columns]
+        if not obsolete:
+            return
         surviving_index_sql = []
         for index in conn.execute("PRAGMA index_list(postcards)").fetchall():
             name = index["name"]
@@ -265,7 +311,7 @@ class Database:
                 info["name"]
                 for info in conn.execute(f'PRAGMA index_info("{name}")')
             ]
-            if any(field in indexed for field in legacy):
+            if any(field in indexed for field in obsolete):
                 continue
             sql = conn.execute(
                 "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
@@ -548,10 +594,16 @@ class Database:
         The import runs in a single transaction.
         Version-1 exports may contain legacy entries without image paths.
         Such entries must receive a front image path before they can be edited.
-        Versions 1-4 are accepted; version 4 adds stable UUID share identifiers
-        and version 5 removes the legacy title and notes fields. Imports of
-        versions 1-4 merge non-empty title and notes values into description
-        (see merge_legacy_fields); version-5 imports reject them as unknown.
+        Versions 1-5 are accepted; version 4 adds stable UUID share identifiers,
+        version 5 removes the legacy title and notes fields and version 6
+        removes the place and region fields. Imports of versions 1-4 merge
+        non-empty title and notes values into description (see
+        merge_legacy_fields); imports of versions 1-5 convert non-blank place
+        and region values into tags with the tag editor's rules (see
+        _merge_location_entry). Version-6 imports - and payloads without a
+        schema_version, which are always treated as the current version -
+        reject all obsolete fields as unknown instead of silently dropping
+        them.
         Replace preserves exported UUIDs; append generates new ones for copies.
         Version-2 exports retain those empty paths with record IDs and timestamps.
         Unknown fields are rejected rather than discarded.
@@ -586,6 +638,8 @@ class Database:
                 try:
                     if version < 5:
                         entry = self._merge_legacy_entry(entry)
+                    if version < 6:
+                        entry = self._merge_location_entry(entry)
                     if payload.get("schema_version", 0) >= 4 and "uuid" not in entry:
                         raise ValueError("schema version 4 and newer postcards must include uuid")
                     self._insert(entry, keep_id=(mode == "replace"), allow_legacy=legacy)
@@ -608,4 +662,30 @@ class Database:
         entry["description"] = merge_legacy_fields(
             values["title"], values["notes"], values["description"]
         )
+        return entry
+
+    @staticmethod
+    def _merge_location_entry(entry):
+        """Map place/region of version 1-5 imports into tags.
+
+        Non-blank values are appended after the entry's own tags, place
+        before region; _clean_tags then applies the regular tag rules
+        (trimming, blank rejection and case-sensitive de-duplication), so
+        values already present as tags - and equal place/region values -
+        produce a single tag.
+        """
+        if not any(field in entry for field in LOCATION_FIELDS):
+            return entry
+        entry = dict(entry)
+        tags = entry.get("tags", [])
+        if not isinstance(tags, list):
+            raise ValueError("tags must be an array of strings")
+        tags = list(tags)
+        for field in LOCATION_FIELDS:
+            value = entry.pop(field, None)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"{field} must be a string or null")
+            if value and value.strip():
+                tags.append(value)
+        entry["tags"] = tags
         return entry

@@ -5,6 +5,7 @@
 // routing.js without the import graph ever containing a cycle.
 
 import { initLanguage } from "./js/i18n.js";
+import { initFooter } from "./js/footer.js";
 import { initTags } from "./js/tags.js";
 import { initUploads, resetUploads } from "./js/upload.js";
 import { initDetail, openDetail, clearCurrentDetail } from "./js/detail.js";
@@ -35,3 +36,6 @@ initRouting({
   onEditHidden: resetUploads,
 });
 route();
+// After route(): the initial view's data request stays first, the version
+// request never delays it, and the footer loads independently of the route.
+initFooter();

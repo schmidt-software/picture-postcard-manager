@@ -93,3 +93,14 @@ tbody tr:hover { background: #f6f8fa; }
 #message { position: fixed; bottom: 1rem; right: 1rem; padding: 0.75rem 1rem; border-radius: 6px;
            background: #1a7f37; color: #fff; }
 #message.error { background: #cf222e; }
+
+footer { padding: 0.75rem 1.5rem; border-top: 1px solid var(--border); }
+footer p { margin: 0; font-size: 0.85rem; color: #59636e; overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  footer { padding: 0.75rem 1rem; }
+}
+/* Forced-colors (high-contrast) mode: let the system palette drive the
+   footer text so it stays readable instead of keeping the muted gray. */
+@media (forced-colors: active) {
+  footer p { color: CanvasText; }
+}

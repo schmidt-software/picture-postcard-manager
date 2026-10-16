@@ -9,6 +9,9 @@ services:
         # another host account (see README "Running as a non-root user").
         PPM_UID: ${PPM_UID:-1000}
         PPM_GID: ${PPM_GID:-1000}
+        # Version shown in the UI footer; local builds default to "dev".
+        # Override with PPM_VERSION=X.Y.Z in the environment or .env file.
+        PPM_VERSION: ${PPM_VERSION:-dev}
     ports:
       - "127.0.0.1:${PPM_PORT:-8000}:8000"
     volumes:

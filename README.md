@@ -193,17 +193,39 @@ last update time. Region and description remain editable and are included in
 storage and JSON exports, but are not shown as overview columns.
 
 The overview loads postcards in pages of 100 rows; **Show more postcards**
-appends the next page. Searching resets to the first page. With several
-thousand postcards the first page stays fast because only one page is queried
-and rendered (measured locally with 5,000 postcards: ~10 ms for a 100-row page
-versus ~30 ms for the full unpaginated list, before image loading).
+appends the next page. Searching or changing a filter resets to the first
+page. With several thousand postcards the first page stays fast because only
+one page is queried and rendered (measured locally with 5,000 postcards:
+~10 ms for a 100-row page versus ~30 ms for the full unpaginated list, before
+image loading).
+
+### Filters
+
+Dropdowns above the overview narrow the collection by an exact place, region,
+year or tag; each lists the values that currently exist in the collection.
+Filters combine with each other, with the search box, with sorting and with
+pagination
+(**Show more postcards** continues the filtered, sorted list), and **Reset filters**
+clears them all. The selection is stored in the browser's local storage and
+restored on reload, like the interface language. The dropdowns refresh
+whenever the collection changes — after saving, deleting (also directly in
+the overview), importing a JSON file, or a bulk image import — so they always
+list only existing values. A
+selected or restored value that no postcard offers anymore (for example
+because its last postcard was just deleted) remains selectable and simply
+yields an empty result until it is changed or reset.
+
+The REST API accepts the same filters as exact-match query parameters on
+`GET /api/postcards` (`place`, `region`, `year`, `tag`), combinable with `q`,
+`limit` and `offset`. `GET /api/postcards/filters` returns the distinct
+non-empty values for each filterable field.
 
 ### Sorting
 
 A **Sort by** selector above the overview orders the postcards by place, region,
 year or last update, ascending or descending (toggled with a direction button);
 **Newest first** (highest ID first) is the default. Sorting combines with the
-search box, and the selection is stored in the browser's local storage and
+search box and the filters, and the selection is stored in the browser's local storage and
 restored on the next visit, like the interface language. Changing the sort key
 or direction resets to the first page; **Show more postcards** continues in the
 selected order, because the server sorts the complete (filtered) result before
@@ -216,7 +238,8 @@ postcards without a value for the chosen field always come last.
 
 The REST API accepts the same options as
 `GET /api/postcards?sort=<key>&dir=<asc|desc>` with keys `place`, `region`,
-`year` and `updated`, combined freely with `q`, `limit` and `offset`; invalid
+`year` and `updated`, combined freely with `q`, the filter parameters, `limit`
+and `offset`; invalid
 values return HTTP 400, and omitting `sort` keeps the newest-first order.
 
 Previews load lazily from browser-accessible URLs on the application's own
@@ -435,7 +458,8 @@ automatically forward host environment variables into the container.
 | Method | Path                         | Description                                   |
 |--------|------------------------------|-----------------------------------------------|
 | GET    | `/api/health`                | Lightweight health check (server and database) |
-| GET    | `/api/postcards?q=<text>&sort=<key>&dir=<asc\|desc>&limit=<n>&offset=<n>` | List postcards (search, optional sorting and pagination) |
+| GET    | `/api/postcards?q=<text>&place=&region=&year=&tag=&sort=<key>&dir=<asc\|desc>&limit=<n>&offset=<n>` | List postcards (search, exact-match filters, optional sorting and pagination) |
+| GET    | `/api/postcards/filters`     | Distinct values for the overview filters      |
 | POST   | `/api/postcards`             | Create a postcard                             |
 | GET    | `/api/postcards/<id>`        | Get a postcard                                |
 | PUT    | `/api/postcards/<id>`        | Update a postcard                             |
@@ -450,8 +474,8 @@ automatically forward host environment variables into the container.
 `GET /api/postcards` returns all postcards (newest first) when no pagination
 parameters are given, which keeps existing clients and exports working. Optional
 `limit` (positive integer) and `offset` (non-negative integer, default 0) select
-a page; both combine with `q`. Invalid values return HTTP 400. `GET /api/export`
-always exports the whole collection.
+a page; both combine with `q` and with the filter parameters. Invalid values
+return HTTP 400. `GET /api/export` always exports the whole collection.
 
 The server uses one SQLite connection per request thread with WAL journal mode
 for file databases, so reads do not block while another request writes. Each

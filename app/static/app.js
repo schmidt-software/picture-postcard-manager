@@ -161,6 +161,7 @@ function applyLanguage(language) {
   renderConfirmation();
   renderDetail();
   renderList();
+  renderFilterOptions();
   try {
     localStorage.setItem(LANGUAGE_STORAGE_KEY, currentLanguage);
   } catch {
@@ -208,7 +209,10 @@ function showView(name) {
   document.querySelectorAll(".view").forEach((v) => (v.hidden = v.id !== `view-${name}`));
   document.querySelectorAll("nav button").forEach((b) =>
     b.classList.toggle("active", b.dataset.view === name));
-  if (name === "browse") return loadList();
+  if (name === "browse") {
+    loadFilterOptions();
+    return loadList();
+  }
 }
 
 function fragmentUuid(fragment) {
@@ -483,11 +487,79 @@ function renderSortControls() {
   direction.setAttribute("aria-pressed", String(currentSort.direction === "desc"));
 }
 
+// --- Overview filters ---------------------------------------------------
+
+const FILTER_STORAGE_KEY = "picture-postcard-manager-filters";
+const FILTER_KEYS = ["place", "region", "year", "tag"];
+let currentFilters = { place: "", region: "", year: "", tag: "" };
+let filterValues = { place: [], region: [], year: [], tag: [] };
+// Incremented per filter-values request; stale responses must not overwrite
+// the dropdowns a newer request already rebuilt.
+let filterOptionsRequest = 0;
+
+function loadSavedFilters() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FILTER_STORAGE_KEY));
+    for (const key of FILTER_KEYS) {
+      if (typeof saved?.[key] === "string") currentFilters[key] = saved[key];
+    }
+  } catch {
+    // No filters are applied when browser storage is unavailable or invalid.
+  }
+}
+
+function saveFilters() {
+  try {
+    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(currentFilters));
+  } catch {
+    // Filters still work for this page when browser storage is unavailable.
+  }
+}
+
+// Rebuilds each filter dropdown from the known values, keeping an active
+// selection even when no postcard currently offers it.
+function renderFilterOptions() {
+  for (const key of FILTER_KEYS) {
+    const select = $(`#filter-${key}`);
+    const values = [...filterValues[key]];
+    if (currentFilters[key] && !values.includes(currentFilters[key])) {
+      values.unshift(currentFilters[key]);
+    }
+    const all = document.createElement("option");
+    all.value = "";
+    all.textContent = translate("filterAll");
+    select.replaceChildren(all, ...values.map((value) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      return option;
+    }));
+    select.value = currentFilters[key];
+  }
+  $("#filter-reset").hidden = !FILTER_KEYS.some((key) => currentFilters[key]);
+}
+
+async function loadFilterOptions() {
+  const request = ++filterOptionsRequest;
+  try {
+    const values = await api("/api/postcards/filters");
+    if (request !== filterOptionsRequest) return;
+    for (const key of FILTER_KEYS) {
+      if (Array.isArray(values?.[key])) filterValues[key] = values[key];
+    }
+  } catch {
+    if (request !== filterOptionsRequest) return;
+    // The dropdowns keep their previous values; filtering still works.
+  }
+  renderFilterOptions();
+}
+
 // Loads one page of the overview; append=true fetches the page after the rows
-// loaded so far, otherwise the list restarts at the first page. The request
-// counter drops stale responses (and their errors): only the newest request
-// may update the list, so a slow response for an old sort order or search
-// term never overwrites or extends the rows of a newer one.
+// loaded so far, otherwise the list restarts at the first page. Only the
+// newest request may update the list, the error display and the load-more
+// state: an older, slower response (e.g. for a previous sort order, filter
+// set or search term) is dropped on both the success and the error path, so
+// it never overwrites or extends the rows of a newer one.
 async function loadList(append = false) {
   const request = ++listRequest;
   try {
@@ -497,6 +569,9 @@ async function loadList(append = false) {
     if (q) params.push(`q=${encodeURIComponent(q)}`);
     if (currentSort.key) {
       params.push(`sort=${currentSort.key}`, `dir=${currentSort.direction}`);
+    }
+    for (const key of FILTER_KEYS) {
+      if (currentFilters[key]) params.push(`${key}=${encodeURIComponent(currentFilters[key])}`);
     }
     const items = await api(`/api/postcards?${params.join("&")}`);
     if (request !== listRequest) return;
@@ -664,7 +739,12 @@ async function deletePostcard(id) {
     await api(`/api/postcards/${id}`, { method: "DELETE" });
     showMessage("deleted");
     if (request === routeRequest && fromForm) await leavePostcard();
-    else if (!$("#view-browse").hidden) await loadList();
+    else if (!$("#view-browse").hidden) {
+      // The deleted postcard may have carried the last use of a filter value,
+      // so the dropdowns are reloaded along with the list. An active selection
+      // stays selectable (see renderFilterOptions), showing an empty result.
+      await Promise.all([loadFilterOptions(), loadList()]);
+    }
   } catch (err) {
     showApiError(err);
   } finally {
@@ -950,6 +1030,14 @@ $("#bulk-form").addEventListener("submit", async (e) => {
     }));
     $("#bulk-files").value = "";
     renderBulkFileCount();
+    // Created postcards may introduce new filter values. Returning to the
+    // overview reloads the dropdowns on entry (showView), but the user may
+    // already have navigated back while the import was still running, so the
+    // dropdowns and the list are refreshed here as well. An active selection
+    // stays selectable (see renderFilterOptions).
+    if (created && !$("#view-browse").hidden) {
+      await Promise.all([loadFilterOptions(), loadList()]);
+    }
   } finally {
     bulkRunning = false;
     $("#bulk-start").disabled = false;
@@ -1010,6 +1098,24 @@ $("#sort-direction").addEventListener("click", () => {
 });
 loadSavedSort();
 renderSortControls();
+
+// Changing a filter returns to the first page of the newly filtered list.
+for (const key of FILTER_KEYS) {
+  $(`#filter-${key}`).addEventListener("change", (event) => {
+    currentFilters[key] = event.target.value;
+    saveFilters();
+    renderFilterOptions();
+    loadList();
+  });
+}
+$("#filter-reset").addEventListener("click", () => {
+  currentFilters = { place: "", region: "", year: "", tag: "" };
+  saveFilters();
+  renderFilterOptions();
+  loadList();
+});
+loadSavedFilters();
+renderFilterOptions();
 
 // popstate also covers fragment changes; listening to hashchange too would route twice.
 window.addEventListener("popstate", route);

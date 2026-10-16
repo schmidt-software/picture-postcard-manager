@@ -27,6 +27,8 @@ RECORD_FIELDS = (*EDITABLE_FIELDS, "id", "uuid", "created_at", "updated_at")
 # User-selectable overview sort keys -> record fields.
 SORT_FIELDS = {"place": "place", "region": "region", "year": "year",
                "updated": "updated_at"}
+# Fields the overview can filter by exact value; "tag" matches a single tag.
+FILTER_FIELDS = ("place", "region", "year")
 
 SCHEMA_TEMPLATE = """
 CREATE TABLE IF NOT EXISTS {table} (
@@ -370,21 +372,46 @@ class Database:
         return value
 
     @staticmethod
-    def _search_clause(query):
-        # Tags are matched as decoded text, not as their JSON representation.
-        clause = " WHERE " + " OR ".join(
-            [f"{field} LIKE ?" for field in TEXT_FIELDS]
-            + ["EXISTS (SELECT 1 FROM json_each(postcards.tags) WHERE value LIKE ?)"]
-        )
-        return clause, (f"%{query}%",) * (len(TEXT_FIELDS) + 1)
+    def _match_clause(query, filters):
+        """Build the WHERE clause for a search query combined with filters.
 
-    def list(self, query=None, sort=None, direction="asc", limit=None, offset=0):
-        """Return postcards, optionally sorted by a SORT_FIELDS key and paged.
+        `filters` maps FILTER_FIELDS names to exact values and/or "tag" to a
+        single tag; all filters must match and combine with the search query.
+        """
+        clauses = []
+        params = []
+        if query:
+            # Tags are matched as decoded text, not as their JSON representation.
+            clauses.append("(" + " OR ".join(
+                [f"{field} LIKE ?" for field in TEXT_FIELDS]
+                + ["EXISTS (SELECT 1 FROM json_each(postcards.tags) WHERE value LIKE ?)"]
+            ) + ")")
+            params.extend([f"%{query}%"] * (len(TEXT_FIELDS) + 1))
+        for field, value in (filters or {}).items():
+            if not isinstance(value, str):
+                raise ValueError(f"{field} filter must be a string")
+            if field == "tag":
+                clauses.append(
+                    "EXISTS (SELECT 1 FROM json_each(postcards.tags) WHERE value = ?)")
+            elif field in FILTER_FIELDS:
+                clauses.append(f"{field} = ?")
+            else:
+                raise ValueError(
+                    f"unknown filter: {field} (use {', '.join(FILTER_FIELDS)} or tag)")
+            params.append(value)
+        if not clauses:
+            return "", ()
+        return " WHERE " + " AND ".join(clauses), tuple(params)
 
-        The default order is newest first (highest id); limit/offset select an
-        optional page. A sorted listing orders the complete (filtered) result
-        before the page is cut, so pages taken with the same sort continue
-        seamlessly where the previous page ended.
+    def list(self, query=None, filters=None, sort=None, direction="asc",
+             limit=None, offset=0):
+        """Return postcards, optionally filtered, sorted and paged.
+
+        Search and exact-match filters combine (see _match_clause). The
+        default order is newest first (highest id); limit/offset select an
+        optional page. A sorted listing orders the complete filtered result
+        before the page is cut, so pages taken with the same sort and filters
+        continue seamlessly where the previous page ended.
         """
         if sort is not None and sort not in SORT_FIELDS:
             raise ValueError(
@@ -395,12 +422,8 @@ class Database:
             raise ValueError("limit must be a positive integer")
         if type(offset) is not int or offset < 0:
             raise ValueError("offset must be a non-negative integer")
-        sql = "SELECT * FROM postcards"
-        params = ()
-        if query:
-            clause, params = self._search_clause(query)
-            sql += clause
-        sql += " ORDER BY id DESC"
+        clause, params = self._match_clause(query, filters)
+        sql = "SELECT * FROM postcards" + clause + " ORDER BY id DESC"
         if sort is None and (limit is not None or offset):
             # SQLite requires LIMIT with OFFSET; -1 means unlimited.
             sql += " LIMIT ? OFFSET ?"
@@ -413,13 +436,26 @@ class Database:
                 rows = rows[offset:None if limit is None else offset + limit]
         return rows
 
-    def count(self, query=None):
-        """Return the number of postcards matching the optional search query."""
-        sql = "SELECT COUNT(*) FROM postcards"
-        params = ()
-        if query:
-            clause, params = self._search_clause(query)
-            sql += clause
+    def filter_values(self):
+        """Return the distinct non-empty values for each filterable field."""
+        values = {}
+        conn = self._conn
+        with self._write_lock():
+            for field in FILTER_FIELDS:
+                rows = conn.execute(
+                    f"SELECT DISTINCT {field} FROM postcards"
+                    f" WHERE {field} != '' ORDER BY {field} COLLATE NOCASE")
+                values[field] = [row[0] for row in rows]
+            rows = conn.execute(
+                "SELECT DISTINCT value FROM postcards, json_each(postcards.tags)"
+                " ORDER BY value COLLATE NOCASE")
+            values["tag"] = [row[0] for row in rows]
+        return values
+
+    def count(self, query=None, filters=None):
+        """Return the number of postcards matching the search query and filters."""
+        clause, params = self._match_clause(query, filters)
+        sql = "SELECT COUNT(*) FROM postcards" + clause
         with self._write_lock():
             return self._conn.execute(sql, params).fetchone()[0]
 

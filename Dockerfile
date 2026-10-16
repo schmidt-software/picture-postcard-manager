@@ -1,6 +1,17 @@
 FROM python:3.13-slim
 
 WORKDIR /srv/app
+
+# Optional dependencies (Pillow for overview thumbnails). The image installs
+# them by default because a Docker deployment serves multiple clients, where
+# thumbnail bandwidth savings matter most; build with
+# --build-arg INSTALL_OPTIONAL=false for a standard-library-only image.
+ARG INSTALL_OPTIONAL=true
+COPY requirements-optional.txt ./
+RUN if [ "$INSTALL_OPTIONAL" = "true" ]; then \
+      pip install --no-cache-dir -r requirements-optional.txt; \
+    fi
+
 COPY app ./app
 
 ENV PPM_HOST=0.0.0.0 \

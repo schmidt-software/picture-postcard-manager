@@ -1,0 +1,6 @@
+# Optional dependencies. The application runs on the Python standard library
+# alone; nothing here is required. See README "Optional dependencies".
+#
+# Pillow enables server-side thumbnails for the overview (issue #28). Without
+# it, thumbnail URLs transparently serve the original images.
+Pillow>=10

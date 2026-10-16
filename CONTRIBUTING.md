@@ -38,3 +38,6 @@
   is merged into `description` on migration and on imports of versions 1-4 (see the README).
   Version 6 removed the `place` and `region` fields; their non-blank values become tags
   on migration and on imports of versions 1-5 (see the README).
+- A user-visible behavior, label, command, configuration, or deployment change updates
+  `docs/user-guide.md` in the same pull request. Do not hard-code a release version in
+  that file; the PDF pipeline injects `{{VERSION}}` and `{{GENERATED_ON}}`.

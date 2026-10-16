@@ -57,6 +57,13 @@ dependency. The import graph is acyclic: shared primitives (`dom`, `api`,
 concatenate the modules in dependency order (`tests/bundle.js`) so they keep
 running without a module loader.
 
+## User guide
+
+Collectors and operators should use
+[docs/user-guide.md](docs/user-guide.md). A later release process is expected
+to attach a PDF built from that file. The PDF is not stored in Git, and the
+guide source does not hard-code a release version.
+
 ## Running locally
 
 ```sh

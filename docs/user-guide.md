@@ -154,9 +154,8 @@ for `linux/amd64` and `linux/arm64`. The image name is:
 | Draft release | Nothing is published | No |
 
 Replace `<version>` below with the release version **without** the leading
-`v`. Replace `<release-tag>` with the tag exactly as GitHub shows it. Do not
-invent a version; copy it from the release that matches the database you
-intend to run.
+`v`. Do not invent a version; copy it from the release that matches the
+database you intend to run.
 
 ```sh
 docker pull ghcr.io/schmidt-software/picture-postcard-manager:<version>

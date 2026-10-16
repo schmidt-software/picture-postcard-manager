@@ -139,35 +139,7 @@ class ImageStore:
         store whose leading bytes match the extension's signature are served.
         The caller must close the returned file.
         """
-        if not NAME_PATTERN.fullmatch(name):
-            return None
-        path = self.root / name
-        try:
-            if path.is_symlink():
-                return None
-            fd = os.open(path, os.O_RDONLY | _NOFOLLOW | _NONBLOCK | _BINARY)
-        except OSError:
-            return None
-        try:
-            info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_IMAGE_BYTES:
-                os.close(fd)
-                return None
-            file = os.fdopen(fd, "rb")
-        except OSError:
-            os.close(fd)
-            return None
-        try:
-            head = file.read(16)
-            extension = name.rsplit(".", 1)[1]
-            if detect_extension(head) != extension:
-                file.close()
-                return None
-            file.seek(0)
-        except OSError:
-            file.close()
-            return None
-        return EXTENSION_TYPES[extension], info.st_size, file
+        return open_stored(self.root, name, NAME_PATTERN)
 
     def read(self, name):
         """Return (content_type, bytes) for a stored image, or None."""
@@ -181,3 +153,42 @@ class ImageStore:
             except OSError:
                 return None
         return ctype, data
+
+
+def open_stored(root, name, pattern):
+    """Return (content_type, size, binary file) for a stored file, or None.
+
+    Shared hardening for originals and thumbnails: only names matching
+    `pattern` of regular, non-symlinked files directly inside `root` whose
+    leading bytes match the extension's signature are opened. The caller must
+    close the returned file.
+    """
+    if not pattern.fullmatch(name):
+        return None
+    path = root / name
+    try:
+        if path.is_symlink():
+            return None
+        fd = os.open(path, os.O_RDONLY | _NOFOLLOW | _NONBLOCK | _BINARY)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_IMAGE_BYTES:
+            os.close(fd)
+            return None
+        file = os.fdopen(fd, "rb")
+    except OSError:
+        os.close(fd)
+        return None
+    try:
+        head = file.read(16)
+        extension = name.rsplit(".", 1)[1]
+        if detect_extension(head) != extension:
+            file.close()
+            return None
+        file.seek(0)
+    except OSError:
+        file.close()
+        return None
+    return EXTENSION_TYPES[extension], info.st_size, file

@@ -407,6 +407,57 @@ The build context is allowlisted in `.dockerignore`: local data, images, Git
 metadata, backups, environment files and Python caches are not sent to the
 builder or included in the image.
 
+### Running as a non-root user
+
+The container runs the application as the unprivileged user `ppm` (UID 1000,
+GID 1000 by default), not as root. The image creates `/data` owned by that
+user, so a **fresh named volume works without extra steps**: Docker initializes
+the volume from the image, and the database, uploaded images and thumbnails
+are all writable. Verify the effective user and write access of a running
+stack with:
+
+```sh
+docker compose exec app id          # uid=1000(ppm) gid=1000(ppm) — never uid=0
+docker compose exec app sh -c 'touch /data/.write-test && rm /data/.write-test && echo /data is writable'
+```
+
+The UID/GID are build arguments. For a **Linux host bind mount** owned by
+another account, match the container user to the directory owner instead of
+changing the directory:
+
+```sh
+PPM_UID="$(id -u)" PPM_GID="$(id -g)" docker compose up -d --build
+```
+
+(put the values in `.env` to make them stick). On Docker Desktop for macOS and
+Windows, bind-mount file sharing already maps ownership, so the defaults work
+there; named volumes are unaffected by host accounts on every platform.
+
+#### Upgrading an existing root-owned `/data` (migration)
+
+Deployments created **before** the non-root change have a `/data` volume or
+bind mount owned by root, which the `ppm` user cannot write. The symptom after
+upgrading is a startup failure (directory or SQLite errors in
+`docker compose logs app`) or `attempt to write a readonly database`. Make a
+[complete backup](#complete-backup-and-restore) first, then fix the ownership
+once with a one-off root container and restart:
+
+```sh
+docker compose stop &&
+  docker compose run --rm --no-deps --user 0 app \
+    chown -R 1000:1000 /data &&
+  docker compose up -d --build
+```
+
+Use your custom `PPM_UID:PPM_GID` values instead of `1000:1000` if you
+override them. The command changes only ownership of `/data` (database,
+SQLite `-wal`/`-shm` sidecar files, `images/` and `images/thumbs/`); file
+contents, names and modes are untouched, so all postcards and images are
+preserved. The one-off container runs as root solely for this `chown` and is
+removed afterwards; the application container itself always stays
+unprivileged. For a Linux bind mount you can equally run
+`sudo chown -R 1000:1000 ./your-data-dir` on the host.
+
 ### Shutdown, restart, rebuild and update
 
 ```sh
@@ -429,6 +480,9 @@ git pull --ff-only
 docker compose up -d --build
 docker compose ps
 ```
+
+When updating across the switch to the non-root container user, also apply the
+[ownership migration](#upgrading-an-existing-root-owned-data-migration) once.
 
 Restarts, container recreation and image rebuilds keep the volume and its data.
 

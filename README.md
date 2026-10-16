@@ -477,13 +477,19 @@ published at all; Caddy is the only entry point (ports 80/443). The plain
 
    ```sh
    cp .env.example .env
-   docker run --rm caddy:2 caddy hash-password --plaintext 'your-password'
+   docker run --rm caddy:2.10 caddy hash-password --plaintext 'your-password'
    ```
 
    Put the username in `PPM_PROXY_USER` and the bcrypt hash in
-   `PPM_PROXY_PASSWORD_HASH`. Escape every `$` in the hash as `$$`
-   (Docker Compose interpolates single `$`), e.g. `$2a$14$abc…` becomes
-   `$$2a$$14$$abc…`.
+   `PPM_PROXY_PASSWORD_HASH`, wrapped in single quotes:
+
+   ```sh
+   PPM_PROXY_PASSWORD_HASH='$2a$14$abc…'
+   ```
+
+   Docker Compose does not interpolate inside single quotes in `.env`, so the
+   `$` characters reach the container unchanged. An unquoted hash is mangled
+   (Compose treats `$2a`, `$14`, … as variable references), so always quote it.
 
 2. Start the stack with both files:
 

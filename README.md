@@ -629,6 +629,64 @@ Stop the stack with the same file list
 (`docker compose -f compose.yaml -f compose.proxy.yaml down`); backup and
 restore commands from the previous section work unchanged.
 
+## Container images (GHCR)
+
+Every published GitHub Release automatically builds and pushes a
+multi-architecture image (`linux/amd64` and `linux/arm64`) to the GitHub
+Container Registry at `ghcr.io/schmidt-software/picture-postcard-manager`,
+built from the exact release tag commit
+(workflow: `.github/workflows/release-image.yml`). The image includes the
+optional Pillow dependency, so overview thumbnails work out of the box, and it
+runs as the unprivileged `ppm` user exactly like a local Compose build (see
+[Running as a non-root user](#running-as-a-non-root-user)).
+
+### Tag convention
+
+| GitHub Release          | GHCR tags                      | `latest` updated |
+|-------------------------|--------------------------------|------------------|
+| Stable `vX.Y.Z`         | `X.Y.Z`, `vX.Y.Z`, `latest`    | yes              |
+| Prerelease `vX.Y.Z-rc.1`| `X.Y.Z-rc.1`, `vX.Y.Z-rc.1`    | **never**        |
+| Draft release           | nothing published              | no               |
+
+So release `v0.1.0` publishes `0.1.0`, `v0.1.0` and `latest`. The plain and
+`v`-prefixed version tags are aliases of the same image; use whichever matches
+your tooling. `latest` always points at the most recent **stable** release;
+prereleases never move it. Tags that are not semver (`vMAJOR.MINOR.PATCH` with
+an optional prerelease suffix) are rejected by the workflow and publish
+nothing. Ordinary branch pushes and pull requests never publish images.
+
+### Pulling and running
+
+```sh
+docker pull ghcr.io/schmidt-software/picture-postcard-manager:0.1.0
+
+docker run -d --name picture-postcard-manager \
+  -p 127.0.0.1:8000:8000 \
+  -v postcard-data:/data \
+  ghcr.io/schmidt-software/picture-postcard-manager:0.1.0
+```
+
+Then open <http://127.0.0.1:8000>. The named volume `postcard-data` holds the
+SQLite database (`/data/postcards.db`) and uploaded images (`/data/images/`),
+and the `127.0.0.1:` prefix publishes the port on the loopback interface only,
+matching the Compose defaults. The container runs as the non-root `ppm` user
+(UID/GID 1000); a fresh named volume is initialized writable from the image.
+For bind mounts or existing root-owned volumes, see the ownership notes and
+migration steps under
+[Running as a non-root user](#running-as-a-non-root-user). All the usual
+environment variables (next section) can be overridden with `-e`.
+
+If the GHCR package is private or pulls require authentication in your
+environment, log in first with a token that has `read:packages`:
+`docker login ghcr.io`. Whether anonymous pulls work depends on the package's
+visibility settings on GitHub.
+
+Docker Compose can use the published image instead of a local build by
+replacing `build: .` with
+`image: ghcr.io/schmidt-software/picture-postcard-manager:0.1.0` in
+`compose.yaml`; everything else (volume, healthcheck, port mapping) stays the
+same.
+
 ## Configuration
 
 | Variable      | Default              | Description              |

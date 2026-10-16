@@ -3,6 +3,7 @@
 !app/**
 !Dockerfile
 !.dockerignore
+!requirements-optional.txt
 **/__pycache__/
 **/*.pyc
 **/*.db

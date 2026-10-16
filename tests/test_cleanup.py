@@ -1,14 +1,17 @@
 """Tests for the orphaned-image cleanup command."""
 
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
 from app.cleanup import cleanup, find_orphans, main, referenced_names
 from app.db import Database
+from app import thumbs
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 8
+JPEG = b"\xff\xd8\xff\xe0" + b"0" * 8
 GENERATED_A = "a" * 32 + ".png"
 GENERATED_B = "b" * 32 + ".jpg"
 GENERATED_C = "c" * 32 + ".webp"
@@ -142,3 +145,54 @@ class CleanupTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CleanupThumbTest(unittest.TestCase):
+    """The cleanup CLI follows originals: referenced thumbs stay, others go."""
+
+    REFERENCED = GENERATED_A
+    ORPHANED = GENERATED_B
+    VANISHED = GENERATED_C
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.image_dir = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        self.thumb_dir = self.image_dir / thumbs.DIR_NAME
+        self.thumb_dir.mkdir()
+        (self.image_dir / self.REFERENCED).write_bytes(PNG)
+        (self.image_dir / self.ORPHANED).write_bytes(JPEG)
+        self.postcards = [{"front_image_path": f"/images/{self.REFERENCED}",
+                           "back_image_path": ""}]
+
+    def thumb_of(self, name, extension="jpg"):
+        path = self.thumb_dir / f"{name.rsplit('.', 1)[0]}.{thumbs.THUMB_SIZE}.{extension}"
+        path.write_bytes(JPEG if extension == "jpg" else PNG)
+        return path
+
+    def test_thumbs_follow_their_originals(self):
+        kept = self.thumb_of(self.REFERENCED)
+        kept_png = self.thumb_of(self.REFERENCED, "png")
+        orphan_thumb = self.thumb_of(self.ORPHANED)
+        vanished_thumb = self.thumb_of(self.VANISHED)
+        stray = self.thumb_dir / "notes.txt"
+        stray.write_text("manual file")
+        orphans = find_orphans(self.image_dir, self.postcards)
+        self.assertEqual(orphans, sorted([self.image_dir / self.ORPHANED,
+                                          orphan_thumb, vanished_thumb]))
+        self.assertNotIn(kept, orphans)
+        self.assertNotIn(kept_png, orphans)
+        self.assertNotIn(stray, orphans)
+
+    def test_symlinked_thumbs_are_ignored(self):
+        target = self.image_dir / "outside.jpg"
+        target.write_bytes(JPEG)
+        link = self.thumb_dir / f"{'d' * 32}.{thumbs.THUMB_SIZE}.jpg"
+        os.symlink(target, link)
+        self.assertEqual(find_orphans(self.image_dir, self.postcards),
+                         [self.image_dir / self.ORPHANED])
+
+    def test_missing_thumbs_directory_is_fine(self):
+        self.thumb_dir.rmdir()
+        self.assertEqual(find_orphans(self.image_dir, self.postcards),
+                         [self.image_dir / self.ORPHANED])

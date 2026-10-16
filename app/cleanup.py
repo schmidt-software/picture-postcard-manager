@@ -1,10 +1,13 @@
-"""Cleanup of orphaned uploaded images.
+"""Cleanup of orphaned uploaded images and their cached thumbnails.
 
 Lists or deletes generated image files in the image directory that no postcard
 references. Only files with generated upload names (32 hex characters plus a
 known extension) directly inside the image directory are considered; any file
 whose name appears in a stored front or back image path is kept, also when the
-path carries a query or fragment or is a full URL. Run with:
+path carries a query or fragment or is a full URL. Cached thumbnails in the
+``thumbs/`` subdirectory follow their originals: a thumbnail is kept exactly
+while a referenced original with the same stem exists, and removed when its
+original is orphaned or has vanished. Other files are never touched. Run with:
 
     python3 -m app.cleanup [--delete] [--db PATH] [--image-dir PATH]
 
@@ -19,6 +22,7 @@ from urllib.parse import unquote, urlsplit
 
 from app.db import Database
 from app.images import NAME_PATTERN
+from app import thumbs
 
 
 def referenced_names(postcards):
@@ -56,22 +60,38 @@ def find_orphans(image_dir, postcards):
     """Return sorted orphaned generated image files directly in image_dir.
 
     Only regular, non-symlinked files whose names match the generated upload
-    pattern and that no postcard references are returned. Other files (manual
-    additions, directories, symlinks) are never considered.
+    pattern and that no postcard references are returned. Cached thumbnails in
+    the ``thumbs/`` subdirectory are orphaned when no kept (referenced and
+    still present) original shares their stem. Other files (manual additions,
+    directories, symlinks) are never considered.
     """
     root = Path(image_dir)
     if not root.is_dir():
         return []
     referenced = referenced_names(postcards)
     orphans = []
+    kept_stems = set()
+    for entry in _generated_files(root, NAME_PATTERN):
+        if entry.name in referenced:
+            kept_stems.add(entry.name.rsplit(".", 1)[0])
+        else:
+            orphans.append(Path(entry.path))
+    for entry in _generated_files(root / thumbs.DIR_NAME, thumbs.THUMB_PATTERN):
+        if entry.name.split(".", 1)[0] not in kept_stems:
+            orphans.append(Path(entry.path))
+    return sorted(orphans)
+
+
+def _generated_files(root, pattern):
+    """Yield regular, non-symlinked files in root whose names match pattern."""
+    if not root.is_dir():
+        return
     for entry in os.scandir(root):
-        if not NAME_PATTERN.fullmatch(entry.name):
+        if not pattern.fullmatch(entry.name):
             continue
         if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
             continue
-        if entry.name not in referenced:
-            orphans.append(Path(entry.path))
-    return sorted(orphans)
+        yield entry
 
 
 def cleanup(db_path, image_dir, delete=False, out=sys.stdout):

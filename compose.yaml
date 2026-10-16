@@ -2,7 +2,13 @@ name: picture-postcard-manager
 
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        # The in-container app user; override for Linux bind mounts owned by
+        # another host account (see README "Running as a non-root user").
+        PPM_UID: ${PPM_UID:-1000}
+        PPM_GID: ${PPM_GID:-1000}
     ports:
       - "127.0.0.1:${PPM_PORT:-8000}:8000"
     volumes:

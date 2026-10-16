@@ -1,0 +1,18 @@
+# Reverse proxy in front of the Picture Postcard Manager app container.
+#
+# All values come from environment variables; see .env.example. Credentials
+# are never written into this file.
+#
+# TLS is automatic: "localhost" (the default) uses Caddy's internal CA,
+# a real hostname gets publicly trusted certificates via ACME.
+
+{$PPM_PROXY_HOST:localhost} {
+	# Basic authentication covers everything behind the proxy:
+	# the UI, the whole REST API and /images/.
+	basic_auth {
+		{$PPM_PROXY_USER} {$PPM_PROXY_PASSWORD_HASH}
+	}
+
+	# Caddy sets X-Forwarded-For and X-Forwarded-Proto automatically.
+	reverse_proxy app:8000
+}

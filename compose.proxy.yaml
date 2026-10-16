@@ -1,0 +1,35 @@
+# Optional reverse-proxy overlay: Caddy terminates TLS and enforces HTTP
+# basic authentication in front of the app (UI, API and /images/).
+#
+# Usage (requires a .env file, see .env.example):
+#   docker compose -f compose.yaml -f compose.proxy.yaml up -d --build
+#
+# The plain `docker compose up` behavior is unchanged: without this file the
+# app is published on 127.0.0.1 only and no proxy container is created.
+
+services:
+  app:
+    # The proxy is the only entry point; do not publish the app itself.
+    ports: !reset []
+
+  proxy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PPM_PROXY_HOST: ${PPM_PROXY_HOST:-localhost}
+      PPM_PROXY_USER: ${PPM_PROXY_USER:?set PPM_PROXY_USER in .env (see .env.example)}
+      PPM_PROXY_PASSWORD_HASH: ${PPM_PROXY_PASSWORD_HASH:?set PPM_PROXY_PASSWORD_HASH in .env (see .env.example)}
+    volumes:
+      - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:

@@ -16,6 +16,11 @@
 - Everything in the repository (code, comments, commit messages, documentation,
   issue/PR texts created by contributors) is written in **English**.
 - Keep the architecture minimal: no third-party dependencies unless clearly necessary.
+- The frontend ES modules under `app/static/js/` must keep an acyclic import
+  graph (checked by `tests/cycles_check.js` via `tests/test_modules.py`). Put
+  shared primitives in leaf modules and pass callbacks (e.g. route handlers
+  into `initRouting`) instead of importing "upward". List every new module in
+  `tests/bundle.js` so the runtime tests cover it.
 - When adding postcard fields, update the schema in `app/db.py` (`SCHEMA`, `EDITABLE_FIELDS`,
   and a migration via `PRAGMA user_version`), the UI in `app/static/`, the tests, and the README.
 - Database changes must keep JSON export/import working; bump `schema_version` when the export format changes.

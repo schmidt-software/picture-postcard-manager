@@ -30,11 +30,24 @@ app/
   images.py        Validation and storage of uploaded images
   cleanup.py       CLI to list or delete orphaned uploaded images
   static/          Web UI (index.html, app.js, languages.js, style.css)
+    js/            Focused ES modules loaded by app.js (no build step):
+                   dom, api, i18n, feedback, preview, tags, upload, routing,
+                   sorting, filters, detail, overview, form, import, bulk
 tests/             unittest-based API, database and localization tests
 data/              Default local (non-Docker) database and images/ location (git-ignored)
 Dockerfile         Container image for server deployment
 compose.yaml       Docker Compose setup
 ```
+
+The frontend is split into small native ES modules under `app/static/js/`;
+`app.js` is the entry point loaded with `<script type="module">`. The browser
+resolves the imports directly — there is no bundler, build step or third-party
+dependency. The import graph is acyclic: shared primitives (`dom`, `api`,
+`i18n`, `feedback`) are leaf modules, and `routing.js` never imports a view —
+`app.js` injects the route handlers via `initRouting({...})`
+(`tests/cycles_check.js` enforces this). The JavaScript runtime tests
+concatenate the modules in dependency order (`tests/bundle.js`) so they keep
+running without a module loader.
 
 ## Running locally
 

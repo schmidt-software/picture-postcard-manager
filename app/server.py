@@ -89,10 +89,13 @@ class Handler(BaseHTTPRequestHandler):
         if not file.is_file() or STATIC_DIR.resolve() not in file.parents:
             return self._error(HTTPStatus.NOT_FOUND, "not found")
         body = file.read_bytes()
-        ctype = mimetypes.guess_type(file.name)[0] or "application/octet-stream"
+        # mimetypes is platform-dependent for .js; modules need a JavaScript type.
+        ctype = ("text/javascript" if file.suffix == ".js"
+                 else mimetypes.guess_type(file.name)[0] or "application/octet-stream")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(body)
 

@@ -1,0 +1,53 @@
+// Image previews for the overview and the detail page.
+
+import { translate } from "./i18n.js";
+
+export function imagePreview(imagePath, side, fullSize = false) {
+  const cell = document.createElement(fullSize ? "figure" : "td");
+  if (fullSize) {
+    cell.className = "detail-photo";
+    const caption = document.createElement("figcaption");
+    caption.dataset.i18n = side;
+    caption.textContent = translate(side);
+    cell.append(caption);
+  }
+  const fallback = document.createElement("span");
+  fallback.className = "image-fallback";
+  fallback.dataset.i18n = imagePath ? "imageUnavailable" : "noImage";
+  fallback.textContent = translate(fallback.dataset.i18n);
+  cell.append(fallback);
+  if (typeof imagePath !== "string" || !imagePath.trim()) return cell;
+
+  let url;
+  try {
+    url = new URL(imagePath, window.location.href);
+  } catch (error) {
+    if (error.name !== "TypeError") throw error;
+    return cell;
+  }
+  // Do not contact external hosts or allow active-content URLs from imported data.
+  if (url.origin !== new URL(window.location.href).origin
+      || !["http:", "https:"].includes(url.protocol)) return cell;
+
+  const image = document.createElement("img");
+  image.className = fullSize ? "postcard-photo" : "postcard-thumbnail";
+  image.dataset.i18nAlt = side;
+  image.alt = translate(side);
+  image.loading = fullSize ? "eager" : "lazy";
+  if (!fullSize) {
+    image.width = 96;
+    image.height = 72;
+  }
+  image.addEventListener("load", () => {
+    image.hidden = false;
+    image.style.visibility = "visible";
+    fallback.hidden = true;
+  });
+  image.addEventListener("error", () => {
+    image.hidden = true;
+    fallback.hidden = false;
+  });
+  cell.append(image);
+  image.src = url.href;
+  return cell;
+}

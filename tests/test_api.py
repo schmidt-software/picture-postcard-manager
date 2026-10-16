@@ -285,6 +285,16 @@ class ApiTest(unittest.TestCase):
         status, _ = self.request("GET", "/../server.py")
         self.assertEqual(status, 404)
 
+    def test_es_modules_are_served_as_javascript(self):
+        static = Path(__file__).resolve().parents[1] / "app" / "static"
+        for path in ["/app.js", *(f"/js/{f.name}" for f in (static / "js").glob("*.js"))]:
+            with urllib.request.urlopen(self.base + path) as res:
+                self.assertEqual(res.status, 200, path)
+                self.assertEqual(res.headers.get_content_type(), "text/javascript", path)
+        for path in ("/js/../db.py", "/js/../../README.md", "/js/missing.js"):
+            status, _ = self.request("GET", path)
+            self.assertEqual(status, 404, path)
+
 
 if __name__ == "__main__":
     unittest.main()

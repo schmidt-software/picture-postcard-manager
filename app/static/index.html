@@ -28,8 +28,6 @@
         <label for="sort-select" data-i18n="sortBy">Sort by</label>
         <select id="sort-select">
           <option value="" data-i18n="sortNewest">Newest first</option>
-          <option value="place" data-i18n="place">Place</option>
-          <option value="region" data-i18n="region">Region</option>
           <option value="year" data-i18n="year">Year</option>
           <option value="updated" data-i18n="updated">Updated</option>
         </select>
@@ -37,12 +35,6 @@
                 aria-pressed="false" hidden>Ascending</button>
       </div>
       <div class="filter-controls">
-        <label><span data-i18n="place">Place</span>
-          <select id="filter-place" data-filter="place"></select>
-        </label>
-        <label><span data-i18n="region">Region</span>
-          <select id="filter-region" data-filter="region"></select>
-        </label>
         <label><span data-i18n="year">Year</span>
           <select id="filter-year" data-filter="year"></select>
         </label>
@@ -57,7 +49,6 @@
             <th data-i18n="id">ID</th>
             <th data-i18n="frontImage">Front image</th>
             <th data-i18n="backImage">Back image</th>
-            <th data-i18n="place">Place</th>
             <th data-i18n="year">Year</th>
             <th data-i18n="tags">Tags</th>
             <th data-i18n="updated">Updated</th>
@@ -115,8 +106,6 @@
           <button type="button" id="choose-back-image" data-i18n="chooseBackImage" aria-describedby="back-image-status">Choose back image</button>
           <span id="back-image-status" aria-live="polite"></span>
         </div>
-        <label><span data-i18n="place">Place</span><input name="place"></label>
-        <label><span data-i18n="region">Region</span><input name="region"></label>
         <label><span data-i18n="year">Year</span><input name="year"></label>
         <label><span data-i18n="description">Description</span><textarea name="description" rows="5"></textarea></label>
         <fieldset class="tags-field">

@@ -5,9 +5,9 @@ import { api } from "./api.js";
 import { translate, registerRenderer } from "./i18n.js";
 
 const FILTER_STORAGE_KEY = "picture-postcard-manager-filters";
-export const FILTER_KEYS = ["place", "region", "year", "tag"];
-export let currentFilters = { place: "", region: "", year: "", tag: "" };
-let filterValues = { place: [], region: [], year: [], tag: [] };
+export const FILTER_KEYS = ["year", "tag"];
+export let currentFilters = { year: "", tag: "" };
+let filterValues = { year: [], tag: [] };
 // Incremented per filter-values request; stale responses must not overwrite
 // the dropdowns a newer request already rebuilt.
 let filterOptionsRequest = 0;
@@ -81,7 +81,7 @@ export function initFilters(onChange) {
     });
   }
   $("#filter-reset").addEventListener("click", () => {
-    currentFilters = { place: "", region: "", year: "", tag: "" };
+    currentFilters = { year: "", tag: "" };
     saveFilters();
     renderFilterOptions();
     onChange();

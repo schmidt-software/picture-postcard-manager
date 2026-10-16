@@ -129,7 +129,7 @@ async function navigationChecks() {
     // directly so the indexed responses below keep addressing the list,
     // detail and delete requests.
     if (url === "/api/postcards/filters") {
-      return Promise.resolve(ok({ place: [], region: [], year: [], tag: [] }));
+      return Promise.resolve(ok({ year: [], tag: [] }));
     }
     const response = deferred();
     pending.push({ url, options, response });
@@ -200,13 +200,13 @@ async function navigationChecks() {
   await flush();
   assert.equal(pending[12].options.method, "DELETE");
   run('navigate("new")');
-  postcardForm.elements.place.value = "Typed";
+  postcardForm.elements.year.value = "Typed";
   await respond(12, { ok: true, status: 204 });
   await overviewDeletion;
   await flush();
   assert.equal(hash(), "#new");
   assert.equal(get("view-edit").hidden, false);
-  assert.equal(postcardForm.elements.place.value, "Typed");
+  assert.equal(postcardForm.elements.year.value, "Typed");
 
   // A failed edit load from the overview leaves no duplicate overview entry.
   run('navigate("browse")');

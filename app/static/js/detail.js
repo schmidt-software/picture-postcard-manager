@@ -43,7 +43,7 @@ export function renderDetail() {
   }
   $("#detail-photos").replaceChildren(...photos);
   const metadata = [];
-  for (const field of ["place", "region", "year", "description", "tags"]) {
+  for (const field of ["year", "description", "tags"]) {
     const value = postcard[field];
     if (!value || (Array.isArray(value) && !value.length)) continue;
     const term = document.createElement("dt");

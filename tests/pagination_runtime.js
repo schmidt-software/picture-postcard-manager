@@ -7,7 +7,7 @@ function makeItems(start, count) {
   return Array.from({ length: count }, (_, index) => ({
     id: start - index,
     uuid: "b962a358-8899-4000-8999-6973bac5d599",
-    front_image_path: "", back_image_path: "", place: "", year: "",
+    front_image_path: "", back_image_path: "", year: "",
     tags: [], updated_at: "2026-10-04",
   }));
 }

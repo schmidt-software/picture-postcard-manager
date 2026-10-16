@@ -61,7 +61,7 @@ async function runTests() {
   context.postcard = {
     id: 8, uuid: "b962a358-8899-4000-8999-6973bac5d599",
     front_image_path: "/images/front.png", back_image_path: "",
-    place: "Place <script>", region: "Preserved region", year: "1910",
+    year: "1910", tags: ["Tag <script>"],
     description: "Preserved description", updated_at: "2026-10-04",
   };
   context.fetch = async (url) => ({
@@ -72,19 +72,17 @@ async function runTests() {
   await run("loadList()");
   const row = get("postcard-list").children[0];
   const values = row.children.map((child) => child.textContent);
-  assert.equal(row.children.length, 8);
+  assert.equal(row.children.length, 7);
   assert.equal(values[0], 8);
-  assert.equal(values[3], "Place <script>");
-  assert.equal(values[4], "1910");
-  assert.equal(values[6], "2026-10-04");
-  assert.ok(!values.includes("Preserved region"));
+  assert.equal(values[3], "1910");
+  assert.equal(values[5], "2026-10-04");
   assert.ok(!values.includes("Preserved description"));
   assert.ok(!values.includes("/images/front.png"));
   await row.emit("click");
   assert.equal(get("detail-title").textContent, "Postcard #8");
   await get("detail-edit").emit("click");
   assert.equal(postcardForm.elements.front_image_path.value, "/images/front.png");
-  assert.equal(postcardForm.elements.region.value, "Preserved region");
+  assert.equal(postcardForm.elements.year.value, "1910");
   assert.equal(postcardForm.elements.description.value, "Preserved description");
   assert.equal(get("form-title").textContent, "Edit postcard #8");
   console.log("Thumbnail runtime checks passed.");

@@ -1,38 +1,15 @@
 "use strict";
 
-// Runtime checks for the image upload controls, using a minimal DOM stand-in.
+// Runtime checks for the form image pickers (issue #45): local previews via
+// object URLs, deferred uploads during save, clearing, revocation and
+// localization. Uses the shared minimal DOM harness from i18n_runtime.js.
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const vm = require("node:vm");
-const path = require("node:path");
-const { bundleSource } = require("./bundle");
-const staticDir = path.join(__dirname, "../app/static");
+const { setup } = require("./i18n_runtime");
 
-class Element {
-  constructor() {
-    this.dataset = {};
-    this.attributes = {};
-    this.listeners = {};
-    this.children = [];
-    this.textContent = "";
-    this.value = "";
-    this.hidden = false;
-    this.disabled = false;
-    this.files = [];
-    this.classList = { toggle() {} };
-  }
-  append(...children) { this.children.push(...children); }
-  replaceChildren(...children) { this.children = children; }
-  setAttribute(name, value) { this.attributes[name] = value; }
-  focus() { this.focused = true; }
-  click() { this.clicks = (this.clicks ?? 0) + 1; }
-  showModal() { this.open = true; }
-  addEventListener(name, callback) { (this.listeners[name] ??= []).push(callback); }
-  emit(name) {
-    return Promise.all((this.listeners[name] || []).map((callback) =>
-      callback({ target: this, preventDefault() {} })));
-  }
-}
+const flush = () => new Promise(setImmediate);
+const ok = (body, status = 201) => ({ ok: true, status, json: async () => body });
+const fail = (status, error) => ({ ok: false, status, json: async () => ({ error }) });
+const png = (name = "card.png", size = 100, type = "image/png") => ({ name, size, type });
 
 function deferred() {
   let resolve;
@@ -41,276 +18,420 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function setup() {
-  const elements = new Map();
-  const all = [];
-  const html = fs.readFileSync(path.join(staticDir, "index.html"), "utf8");
-  for (const [, tag, attributes] of html.matchAll(/<(\w+)\b([^>]*)>/g)) {
-    const el = new Element();
-    el.tag = tag;
-    for (const [, name, value] of attributes.matchAll(/([\w-]+)="([^"]*)"/g)) {
-      el.attributes[name] = value;
-      if (name.startsWith("data-")) {
-        el.dataset[name.slice(5).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = value;
-      } else {
-        el[name] = value;
-      }
+// Tracks object URLs so revocation on replace/clear/reset/success is testable.
+function trackObjectUrls(ui) {
+  const created = [];
+  const revoked = [];
+  let counter = 0;
+  ui.context.URL = class extends URL {
+    static createObjectURL(file) {
+      const url = `blob:mock-${(counter += 1)}`;
+      created.push({ url, file });
+      return url;
     }
-    el.hidden = /\bhidden\b/.test(attributes);
-    if (el.id) elements.set(`#${el.id}`, el);
-    all.push(el);
-  }
-  const form = elements.get("#postcard-form");
-  form.elements = Object.fromEntries(all
-    .filter((el) => el.name && ["input", "textarea"].includes(el.tag)
-      && !["file", "radio"].includes(el.type))
-    .map((el) => [el.name, el]));
-  form.reset = () => Object.values(form.elements).forEach((el) => (el.value = ""));
-  const importForm = elements.get("#import-form");
-  importForm.elements = { file: elements.get("#import-file"), mode: { value: "append" } };
-  const requests = [];
-  const uploads = [];
-  const context = vm.createContext({
-    window: {
-      location: new URL("http://127.0.0.1:8000/"),
-      history: {
-        pushState(state, title, url) { context.window.location.href = String(url); },
-        replaceState(state, title, url) { context.window.location.href = String(url); },
-      },
-      addEventListener() {},
-    },
-    URL,
-    navigator: {},
-    document: {
-      documentElement: {},
-      querySelector: (selector) => elements.get(selector),
-      querySelectorAll: (selector) => {
-        if (selector === "nav button") return all.filter((el) => el.dataset.view);
-        if (selector === ".view") return all.filter((el) => el.class === "view");
-        const attribute = selector.slice(1, -1);
-        return all.filter((el) => Object.hasOwn(el.attributes, attribute));
-      },
-      createElement: () => new Element(),
-    },
-    localStorage: { getItem: () => null, setItem() {} },
-    FormData: class {
-      constructor(f) { this.form = f; }
-      *[Symbol.iterator]() {
-        for (const [key, el] of Object.entries(this.form.elements)) yield [key, el.value];
-      }
-    },
-    fetch: (url, options = {}) => {
-      requests.push({ url, options });
-      if (url === "/api/images") {
-        const upload = deferred();
-        uploads.push({ options, ...upload });
-        return upload.promise;
-      }
-      return Promise.resolve({ ok: true, status: 200, json: async () => [] });
-    },
-    setTimeout: () => 1,
-    clearTimeout() {},
-  });
-  vm.runInContext(fs.readFileSync(path.join(staticDir, "languages.js"), "utf8"), context);
-  vm.runInContext(bundleSource(staticDir), context);
-  const get = (id) => elements.get(`#${id}`);
-  return {
-    context, form, requests, uploads, get,
-    run: (source) => vm.runInContext(source, context),
-    front: form.elements.front_image_path,
-    back: form.elements.back_image_path,
+    static revokeObjectURL(url) { revoked.push(url); }
   };
+  return { created, revoked };
 }
 
-const flush = () => new Promise(setImmediate);
-const ok = (body, status = 201) => ({ ok: true, status, json: async () => body });
-const fail = (status, error) => ({ ok: false, status, json: async () => ({ error }) });
-const png = (name = "card.png", size = 100, type = "image/png") => ({ name, size, type });
+function pickerSetup() {
+  const uploads = [];
+  const saves = [];
+  const ui = setup(null, false, {
+    fetch(url, options) {
+      if (url === "/api/images") {
+        const upload = { options, ...deferred() };
+        uploads.push(upload);
+        return upload.promise;
+      }
+      if (url.startsWith("/api/postcards") && ["POST", "PUT"].includes(options?.method)) {
+        saves.push({ url, options });
+        return ok(JSON.parse(options.body), options.method === "POST" ? 201 : 200);
+      }
+      return ok([], 200);
+    },
+  });
+  const urls = trackObjectUrls(ui);
+  return { ...ui, uploads, saves, ...urls };
+}
 
 async function choose(ui, side, file) {
   ui.get(`${side}-image-file`).files = [file];
-  const done = ui.get(`${side}-image-file`).emit("change");
+  await ui.get(`${side}-image-file`).emit("change");
   await flush();
-  return { done };
 }
 
-async function runTests() {
-  let ui = setup();
-  const { get, run, front, back, uploads, requests } = ui;
-  await flush();
-  run("openForm({id: 3, front_image_path: 'old/front.jpg', back_image_path: 'old/back.jpg'})");
+const visibleText = (ui) =>
+  ui.all.map((el) => el.textContent).filter(Boolean).join("\n");
 
-  // Each path has its own picker, which opens only its own hidden file input.
+async function testEmptySelectReplaceClearReselect() {
+  const ui = pickerSetup();
+  const { get, created, revoked } = ui;
+  await flush();
+  ui.run("openForm()");
+
   for (const side of ["front", "back"]) {
+    // Empty state: accessible placeholder, no preview, no trash button.
+    const control = get(`${side}-image-control`);
+    assert.equal(control.tag, "button");
+    assert.equal(control.type, "button");
+    assert.ok(control.attributes["aria-label"]);
+    assert.ok(control.attributes["aria-describedby"].includes(`${side}-image-status`));
+    assert.equal(get(`${side}-image-placeholder`).hidden, false);
+    assert.equal(get(`${side}-image-placeholder`).textContent,
+      "No image selected. Opens the file picker.");
+    assert.equal(get(`${side}-image-preview`).hidden, true);
+    assert.equal(get(`${side}-image-clear`).hidden, true);
     const input = get(`${side}-image-file`);
     assert.equal(input.hidden, true);
     assert.equal(input.type, "file");
     assert.equal(input.accept, "image/png,image/jpeg,image/gif,image/webp");
-    assert.equal(input.name, undefined);
-    await get(`choose-${side}-image`).emit("click");
-    assert.equal(input.clicks, 1);
+    // No visible/editable path field: the path lives in a hidden input.
+    assert.equal(ui.postcardForm.elements[`${side}_image_path`].type, "hidden");
+    // Clicking the control opens the native picker (button semantics give
+    // Enter/Space and touch activation for free).
+    await control.emit("click");
+    assert.equal(input.clicked, true);
   }
-  assert.equal(get("front-image-file").clicks, 1);
-  assert.equal(get("choose-front-image").textContent, "Choose front image");
 
-  // Binary upload keeps the image Content-Type and disables saving while pending.
-  const frontFile = png();
-  let done = (await choose(ui, "front", frontFile)).done;
-  assert.equal(uploads.length, 1);
-  assert.equal(requests.at(-1).url, "/api/images");
-  assert.equal(uploads[0].options.method, "POST");
-  assert.equal(uploads[0].options.headers["Content-Type"], "image/png");
-  assert.equal(uploads[0].options.body, frontFile);
+  // Selecting a file shows a local object-URL preview; nothing is uploaded.
+  const file = png();
+  await choose(ui, "front", file);
+  assert.equal(created.length, 1);
+  assert.equal(created[0].file, file);
+  assert.equal(get("front-image-preview").src, "blob:mock-1");
+  assert.equal(get("front-image-preview").hidden, false);
+  assert.equal(get("front-image-placeholder").hidden, true);
+  assert.equal(get("front-image-clear").hidden, false);
+  assert.equal(get("front-image-status").textContent, "Image selected.");
+  assert.equal(ui.uploads.length, 0, "selection must not upload");
+  // The file input is cleared so the same file can fire change again.
   assert.equal(get("front-image-file").value, "");
-  assert.equal(get("save").disabled, true);
-  assert.equal(get("choose-front-image").disabled, true);
-  assert.equal(get("choose-back-image").disabled, false);
-  assert.equal(get("front-image-status").textContent, "Uploading image…");
-  assert.equal(ui.form.attributes["aria-busy"], "true");
 
-  // Saving is refused while an upload is pending.
-  const before = requests.length;
-  await ui.form.emit("submit");
-  assert.equal(requests.length, before);
-  assert.equal(get("message").textContent, "Error: Please wait until the image upload has finished.");
+  // Replacing the selection revokes the previous object URL.
+  await choose(ui, "front", png("other.png"));
+  assert.deepEqual(revoked, ["blob:mock-1"]);
+  assert.equal(get("front-image-preview").src, "blob:mock-2");
 
-  // Concurrent back upload; completion order does not mix up fields.
-  const backDone = (await choose(ui, "back", png("b.webp", 10, "image/webp"))).done;
-  assert.equal(uploads[1].options.headers["Content-Type"], "image/webp");
-  uploads[1].resolve(ok({ path: "/images/" + "b".repeat(32) + ".webp" }));
-  await backDone;
-  assert.equal(back.value, "/images/" + "b".repeat(32) + ".webp");
-  assert.equal(front.value, "old/front.jpg");
-  assert.equal(get("save").disabled, true);
-  assert.equal(get("choose-back-image").disabled, false);
-  uploads[0].resolve(ok({ path: "/images/" + "a".repeat(32) + ".png" }));
-  await done;
-  assert.equal(front.value, "/images/" + "a".repeat(32) + ".png");
-  assert.equal(back.value, "/images/" + "b".repeat(32) + ".webp");
-  assert.equal(get("save").disabled, false);
-  assert.equal(get("choose-front-image").disabled, false);
-  assert.equal(get("front-image-status").textContent, "Image uploaded.");
-  assert.equal(ui.form.attributes["aria-busy"], "false");
+  // The trash button clears selection, preview, input and returns focus.
+  await get("front-image-clear").emit("click");
+  assert.deepEqual(revoked, ["blob:mock-1", "blob:mock-2"]);
+  assert.equal(get("front-image-preview").hidden, true);
+  assert.equal(get("front-image-placeholder").hidden, false);
+  assert.equal(get("front-image-clear").hidden, true);
+  assert.equal(get("front-image-file").value, "");
+  assert.equal(ui.postcardForm.elements.front_image_path.value, "");
+  assert.equal(get("front-image-status").textContent, "Image removed.");
+  assert.equal(get("front-image-control").focused, true);
 
-  // The uploaded paths are saved with the postcard.
-  await ui.form.emit("submit");
-  const put = requests.find((r) => r.options.method === "PUT");
-  assert.equal(put.options.headers["Content-Type"], "application/json");
-  assert.deepEqual(
-    [JSON.parse(put.options.body).front_image_path, JSON.parse(put.options.body).back_image_path],
-    ["/images/" + "a".repeat(32) + ".png", "/images/" + "b".repeat(32) + ".webp"]);
+  // The same file can be selected again after clearing.
+  await choose(ui, "front", file);
+  assert.equal(get("front-image-preview").src, "blob:mock-3");
+  assert.equal(get("front-image-clear").hidden, false);
 
-  // Server errors keep the previous path, are localized and restore controls.
-  run("openForm({id: 4, front_image_path: 'keep/front.png', back_image_path: 'keep/back.png'})");
-  run('applyLanguage("de")');
-  for (const [response, message] of [
-    [fail(415, "image content is not a valid PNG, JPEG, GIF or WebP file"),
-      "Der Dateiinhalt ist kein gültiges PNG-, JPEG-, GIF- oder WebP-Bild."],
-    [fail(500, "image could not be stored"),
-      "Der Server konnte das Bild nicht speichern. Bitte erneut versuchen oder den Administrator kontaktieren."],
-    [fail(413, "image is too large (maximum 20 MiB)"),
-      "Das Bild ist zu groß. Die maximale Größe beträgt 20 MiB."],
-    [ok({}), "Die Anfrage ist fehlgeschlagen. Bitte erneut versuchen."],
-    [new TypeError("Failed to fetch"),
-      "Die Anfrage ist fehlgeschlagen. Bitte erneut versuchen."],
-  ]) {
-    done = (await choose(ui, "front", png())).done;
-    if (response instanceof Error) uploads.at(-1).reject(response);
-    else uploads.at(-1).resolve(response);
-    await done;
-    assert.equal(front.value, "keep/front.png");
-    assert.equal(back.value, "keep/back.png");
-    assert.equal(get("front-image-status").textContent,
-      `Hochladen fehlgeschlagen: ${message} Der bisherige Pfad wurde beibehalten.`);
-    assert.equal(get("front-image-status").className, "upload-error");
-    assert.equal(get("save").disabled, false);
-    assert.equal(get("choose-front-image").disabled, false);
-  }
-  run('applyLanguage("en")');
-  assert.equal(get("front-image-status").textContent,
-    "Image upload failed: The request failed. Please try again. The previous path was kept.");
-  assert.equal(get("choose-back-image").textContent, "Choose back image");
-
-  // Client-side checks reject files before uploading them.
-  const count = uploads.length;
-  for (const [file, message] of [
-    [png("huge.png", 20 * 1024 * 1024 + 1), "The image is too large. The maximum size is 20 MiB."],
-    [png("x.svg", 10, "image/svg+xml"),
-      "This image type is not supported. Please choose a PNG, JPEG, GIF or WebP file."],
-    [png("x", 10, ""), "This image type is not supported. Please choose a PNG, JPEG, GIF or WebP file."],
-    [png("empty.png", 0), "The selected image file is empty."],
-  ]) {
-    await choose(ui, "back", file);
-    assert.equal(back.value, "keep/back.png");
-    assert.equal(get("back-image-status").textContent,
-      `Image upload failed: ${message} The previous path was kept.`);
-    assert.equal(get("save").disabled, false);
-  }
-  assert.equal(uploads.length, count);
   // Cancelling the native picker changes nothing.
   get("back-image-file").files = [];
   await get("back-image-file").emit("change");
-  assert.equal(uploads.length, count);
+  assert.equal(get("back-image-placeholder").hidden, false);
 
-  // A stale upload never writes into a form that was switched, cancelled or reset.
-  for (const action of [
-    "openForm({id: 5, front_image_path: 'other.png'})",
-    "openForm()",
-    "showView('browse')",
+  // Rejected files keep the current selection and show a localized reason.
+  for (const [bad, message] of [
+    [png("huge.png", 20 * 1024 * 1024 + 1), "The image is too large. The maximum size is 20 MiB."],
+    [png("x.svg", 10, "image/svg+xml"),
+      "This image type is not supported. Please choose a PNG, JPEG, GIF or WebP file."],
+    [png("empty.png", 0), "The selected image file is empty."],
   ]) {
-    run("openForm({id: 4, front_image_path: 'keep/front.png'})");
-    done = (await choose(ui, "front", png())).done;
-    assert.equal(get("save").disabled, true);
-    run(action);
-    assert.equal(get("save").disabled, false);
-    assert.equal(get("choose-front-image").disabled, false);
-    assert.equal(get("front-image-status").textContent, "");
-    const value = front.value;
-    uploads.at(-1).resolve(ok({ path: "/images/" + "c".repeat(32) + ".png" }));
-    await done;
-    assert.equal(front.value, value);
-    assert.equal(get("save").disabled, false);
-    assert.equal(get("front-image-status").textContent, "");
+    await choose(ui, "front", bad);
+    assert.equal(get("front-image-preview").src, "blob:mock-3", "selection must be kept");
+    assert.equal(get("front-image-status").textContent, message);
+    assert.equal(get("front-image-status").className, "upload-error");
   }
-  run("openForm({id: 4, front_image_path: 'keep/front.png'})");
-  done = (await choose(ui, "back", png())).done;
-  await get("cancel").emit("click");
-  run("openForm({id: 4, front_image_path: 'keep/front.png'})");
-  const replacement = (await choose(ui, "back", png())).done;
-  uploads.at(-2).resolve(ok({ path: "/images/" + "d".repeat(32) + ".png" }));
-  await done;
-  assert.equal(back.value, "");
-  assert.equal(get("save").disabled, true);
-  uploads.at(-1).resolve(ok({ path: "/images/" + "e".repeat(32) + ".png" }));
-  await replacement;
-  assert.equal(back.value, "/images/" + "e".repeat(32) + ".png");
+  assert.equal(created.length, 3);
+  assert.equal(ui.uploads.length, 0);
+}
 
-  // Manual entry stays possible and wins over a pending upload.
-  done = (await choose(ui, "front", png())).done;
-  front.value = "manual/front.jpg";
-  await front.emit("input");
-  assert.equal(get("save").disabled, false);
-  uploads.at(-1).resolve(ok({ path: "/images/" + "f".repeat(32) + ".png" }));
-  await done;
-  assert.equal(front.value, "manual/front.jpg");
-
-  // An upload fills a missing required front path and clears its validation error.
-  ui = setup();
+async function testValidationAndSubmission() {
+  const ui = pickerSetup();
+  const { get, saves, uploads, revoked } = ui;
   await flush();
   ui.run("openForm()");
-  await ui.form.emit("submit");
-  assert.equal(ui.get("front-image-error").hidden, false);
-  done = (await choose(ui, "front", png())).done;
-  ui.uploads[0].resolve(ok({ path: "/images/" + "9".repeat(32) + ".png" }));
-  await done;
-  assert.equal(ui.front.value, "/images/" + "9".repeat(32) + ".png");
-  assert.equal(ui.get("front-image-error").hidden, true);
-  assert.equal(ui.front.attributes["aria-invalid"], "false");
-  await ui.form.emit("submit");
-  const post = ui.requests.find((r) => r.url === "/api/postcards" && r.options.method === "POST");
-  assert.equal(JSON.parse(post.options.body).front_image_path, "/images/" + "9".repeat(32) + ".png");
-  assert.equal(JSON.parse(post.options.body).back_image_path, "");
-  console.log("Image upload runtime checks passed.");
+
+  // Front image is required: submitting empty shows the localized error.
+  await ui.postcardForm.emit("submit");
+  assert.equal(saves.length, 0);
+  assert.equal(get("front-image-error").hidden, false);
+  assert.equal(get("front-image-error").textContent, "Please choose a front image.");
+  assert.equal(get("front-image-control").focused, true);
+  ui.run('applyLanguage("de")');
+  assert.equal(get("front-image-error").textContent,
+    "Bitte ein Bild für die Vorderseite auswählen.");
+  ui.run('applyLanguage("en")');
+
+  // Selecting a front image clears the validation state.
+  await choose(ui, "front", png("front.png"));
+  assert.equal(get("front-image-error").hidden, true);
+  await choose(ui, "back", png("back.webp", 10, "image/webp"));
+
+  // Submitting uploads front then back, then saves the returned paths.
+  const submit = ui.postcardForm.emit("submit");
+  await flush();
+  assert.equal(uploads.length, 1);
+  assert.equal(uploads[0].options.headers["Content-Type"], "image/png");
+  assert.equal(uploads[0].options.body.name, "front.png");
+  assert.equal(get("save").disabled, true);
+  assert.equal(get("front-image-control").disabled, true);
+  assert.equal(get("front-image-clear").disabled, true);
+  assert.equal(ui.postcardForm.attributes["aria-busy"], "true");
+  assert.equal(get("front-image-status").textContent, "Uploading image…");
+
+  // A second submit while uploading is refused.
+  const requestCount = ui.requests.length;
+  await ui.postcardForm.emit("submit");
+  assert.equal(ui.requests.length, requestCount);
+  assert.equal(get("message").textContent,
+    "Error: Please wait until the image upload has finished.");
+
+  const frontPath = "/images/" + "a".repeat(32) + ".png";
+  const backPath = "/images/" + "b".repeat(32) + ".webp";
+  uploads[0].resolve(ok({ path: frontPath }));
+  await flush();
+  assert.equal(uploads.length, 2);
+  assert.equal(uploads[1].options.headers["Content-Type"], "image/webp");
+  uploads[1].resolve(ok({ path: backPath }));
+  await submit;
+  await flush();
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].options.method, "POST");
+  const body = JSON.parse(saves[0].options.body);
+  assert.equal(body.front_image_path, frontPath);
+  assert.equal(body.back_image_path, backPath);
+  assert.equal(ui.postcardForm.attributes["aria-busy"], "false");
+  // Success leaves the form; both preview URLs were revoked.
+  assert.ok(revoked.includes("blob:mock-1"));
+  assert.ok(revoked.includes("blob:mock-2"));
+  assert.equal(ui.context.window.location.hash, "#browse");
+}
+
+async function testUploadFailureKeepsSelection() {
+  const ui = pickerSetup();
+  const { get, saves, uploads, revoked } = ui;
+  await flush();
+  ui.run("openForm()");
+  await choose(ui, "front", png("front.png"));
+  await choose(ui, "back", png("back.png"));
+
+  // The front upload succeeds but the back upload fails: the save is aborted,
+  // both selections and previews stay, and the error is localized.
+  let submit = ui.postcardForm.emit("submit");
+  await flush();
+  uploads[0].resolve(ok({ path: "/images/" + "a".repeat(32) + ".png" }));
+  await flush();
+  uploads[1].resolve(fail(500, "image could not be stored"));
+  await submit;
+  assert.equal(saves.length, 0);
+  assert.equal(get("front-image-preview").src, "blob:mock-1");
+  assert.equal(get("back-image-preview").src, "blob:mock-2");
+  assert.deepEqual(revoked, []);
+  assert.equal(get("back-image-status").textContent,
+    "Image upload failed: The server could not store the image. "
+    + "Please try again or contact the administrator. The selected image was kept.");
+  assert.equal(get("back-image-status").className, "upload-error");
+  assert.equal(get("save").disabled, false);
+  ui.run('applyLanguage("de")');
+  assert.equal(get("back-image-status").textContent,
+    "Hochladen fehlgeschlagen: Der Server konnte das Bild nicht speichern. "
+    + "Bitte erneut versuchen oder den Administrator kontaktieren. "
+    + "Das ausgewählte Bild wurde beibehalten.");
+  ui.run('applyLanguage("en")');
+
+  // Retrying only uploads the still-missing back image (no duplicate upload).
+  submit = ui.postcardForm.emit("submit");
+  await flush();
+  assert.equal(uploads.length, 3);
+  assert.equal(uploads[2].options.body.name, "back.png");
+  uploads[2].resolve(ok({ path: "/images/" + "b".repeat(32) + ".png" }));
+  await submit;
+  await flush();
+  assert.equal(saves.length, 1);
+  const body = JSON.parse(saves[0].options.body);
+  assert.equal(body.front_image_path, "/images/" + "a".repeat(32) + ".png");
+  assert.equal(body.back_image_path, "/images/" + "b".repeat(32) + ".png");
+
+  // Network errors are localized too.
+  ui.run("openForm()");
+  await choose(ui, "front", png());
+  submit = ui.postcardForm.emit("submit");
+  await flush();
+  uploads[3].reject(new TypeError("Failed to fetch"));
+  await submit;
+  assert.equal(get("front-image-status").textContent,
+    "Image upload failed: The request failed. Please try again. The selected image was kept.");
+  assert.equal(get("front-image-preview").hidden, false);
+}
+
+async function testEditMode() {
+  const ui = pickerSetup();
+  const { get, saves, uploads, revoked } = ui;
+  await flush();
+  ui.run("openForm({id: 7, front_image_path: '/images/front.png',"
+    + " back_image_path: '/images/back.png'})");
+
+  // Stored same-origin images are shown via their server URL; the raw path is
+  // never rendered as text anywhere in the UI.
+  assert.equal(get("front-image-preview").src, "http://127.0.0.1:8000/images/front.png");
+  assert.equal(get("front-image-preview").hidden, false);
+  assert.equal(get("front-image-placeholder").hidden, true);
+  assert.equal(get("front-image-clear").hidden, false);
+  assert.ok(!visibleText(ui).includes("/images/front.png"), "path must not leak as text");
+
+  // Saving without changes keeps both stored paths; nothing is uploaded.
+  await ui.postcardForm.emit("submit");
+  await flush();
+  assert.equal(uploads.length, 0);
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].options.method, "PUT");
+  assert.equal(JSON.parse(saves[0].options.body).front_image_path, "/images/front.png");
+  assert.equal(JSON.parse(saves[0].options.body).back_image_path, "/images/back.png");
+
+  // Replacing the front image previews locally and uploads only on save; the
+  // stored file is never deleted by the client (no DELETE request).
+  ui.run("openForm({id: 7, front_image_path: '/images/front.png',"
+    + " back_image_path: '/images/back.png'})");
+  await choose(ui, "front", png("new-front.png"));
+  assert.equal(get("front-image-preview").src, "blob:mock-1");
+  const submit = ui.postcardForm.emit("submit");
+  await flush();
+  uploads[0].resolve(ok({ path: "/images/" + "c".repeat(32) + ".png" }));
+  await submit;
+  await flush();
+  assert.equal(saves.length, 2);
+  const body = JSON.parse(saves[1].options.body);
+  assert.equal(body.front_image_path, "/images/" + "c".repeat(32) + ".png");
+  assert.equal(body.back_image_path, "/images/back.png");
+  assert.ok(!ui.requests.some((request) => request.options?.method === "DELETE"));
+
+  // Clearing a stored back image empties the association only in form state;
+  // it reaches the server when the form is saved.
+  ui.run("openForm({id: 7, front_image_path: '/images/front.png',"
+    + " back_image_path: '/images/back.png'})");
+  await get("back-image-clear").emit("click");
+  assert.equal(ui.postcardForm.elements.back_image_path.value, "");
+  assert.equal(get("back-image-placeholder").hidden, false);
+  await ui.postcardForm.emit("submit");
+  await flush();
+  assert.equal(JSON.parse(saves[2].options.body).back_image_path, "");
+
+  // Clearing the stored front image re-arms the required validation on save.
+  ui.run("openForm({id: 7, front_image_path: '/images/front.png'})");
+  await get("front-image-clear").emit("click");
+  const count = saves.length;
+  await ui.postcardForm.emit("submit");
+  assert.equal(saves.length, count);
+  assert.equal(get("front-image-error").hidden, false);
+
+  // A stored image that fails to load falls back to localized text.
+  ui.run("openForm({id: 7, front_image_path: '/images/front.png'})");
+  await get("front-image-preview").emit("error");
+  assert.equal(get("front-image-preview").hidden, true);
+  assert.equal(get("front-image-unavailable").hidden, false);
+  assert.equal(get("front-image-unavailable").textContent, "Image unavailable");
+  assert.equal(get("front-image-clear").hidden, false, "broken image can still be cleared");
+
+  // External-origin stored paths are never contacted or rendered.
+  ui.run("openForm({id: 7, front_image_path: 'https://evil.example/x.png'})");
+  assert.equal(get("front-image-preview").hidden, true);
+  assert.equal(get("front-image-unavailable").hidden, false);
+  assert.ok(!visibleText(ui).includes("evil.example"));
+  assert.deepEqual(revoked, ["blob:mock-1"], "only local object URLs are ever revoked");
+}
+
+async function testResetNavigationAndStaleUploads() {
+  const ui = pickerSetup();
+  const { get, saves, uploads, revoked } = ui;
+  await flush();
+
+  // Cancelling the form revokes the selection's object URL.
+  ui.run("openForm()");
+  await choose(ui, "front", png());
+  await get("cancel").emit("click");
+  await flush();
+  assert.deepEqual(revoked, ["blob:mock-1"]);
+
+  // Re-opening the form drops a previous selection and its object URL.
+  ui.run("openForm()");
+  await choose(ui, "front", png());
+  ui.run("openForm()");
+  assert.deepEqual(revoked, ["blob:mock-1", "blob:mock-2"]);
+  assert.equal(get("front-image-placeholder").hidden, false);
+  assert.equal(get("front-image-clear").hidden, true);
+
+  // Navigating away mid-upload aborts the save: the late upload result never
+  // writes into the next form and the object URL was revoked on leave.
+  ui.run("openForm()");
+  await choose(ui, "front", png());
+  const submit = ui.postcardForm.emit("submit");
+  await flush();
+  assert.equal(get("save").disabled, true);
+  ui.run("showView('browse')");
+  assert.deepEqual(revoked.at(-1), "blob:mock-3");
+  assert.equal(get("save").disabled, false);
+  uploads[0].resolve(ok({ path: "/images/" + "a".repeat(32) + ".png" }));
+  await submit;
+  await flush();
+  assert.equal(saves.length, 0, "aborted save must not store the postcard");
+  assert.equal(ui.postcardForm.elements.front_image_path.value, "");
+}
+
+async function testLocalizationAndAria() {
+  const ui = pickerSetup();
+  const { get } = ui;
+  await flush();
+  ui.run("openForm()");
+
+  ui.run('applyLanguage("de")');
+  assert.equal(get("front-image-placeholder").textContent,
+    "Kein Bild ausgewählt. Öffnet die Dateiauswahl.");
+  assert.equal(get("front-image-control").attributes["aria-label"],
+    "Bild der Vorderseite auswählen");
+  assert.equal(get("back-image-control").attributes["aria-label"],
+    "Bild der Rückseite auswählen");
+  assert.equal(get("front-image-clear").attributes["aria-label"],
+    "Bild der Vorderseite entfernen");
+  assert.equal(get("back-image-clear").attributes["aria-label"],
+    "Bild der Rückseite entfernen");
+
+  // Status messages re-render on language change.
+  await choose(ui, "front", png());
+  assert.equal(get("front-image-status").textContent, "Bild ausgewählt.");
+  ui.run('applyLanguage("en")');
+  assert.equal(get("front-image-status").textContent, "Image selected.");
+  await get("front-image-clear").emit("click");
+  assert.equal(get("front-image-status").textContent, "Image removed.");
+  ui.run('applyLanguage("de")');
+  assert.equal(get("front-image-status").textContent, "Bild entfernt.");
+
+  // The trash icon is decorative (not color-only): the accessible name comes
+  // from the button's localized aria-label and the icon is hidden from AT.
+  const icon = get("front-image-clear").children?.[0]
+    ?? ui.all.find((el) => el.class === "icon icon-delete");
+  assert.ok(icon, "trash button needs an icon span");
+  assert.equal(icon.attributes["aria-hidden"], "true");
+
+  // Status regions are polite live regions.
+  for (const side of ["front", "back"]) {
+    assert.equal(get(`${side}-image-status`).attributes["aria-live"], "polite");
+    assert.equal(get(`${side}-image-status`).attributes.role, "status");
+  }
+}
+
+async function runTests() {
+  await testEmptySelectReplaceClearReselect();
+  await testValidationAndSubmission();
+  await testUploadFailureKeepsSelection();
+  await testEditMode();
+  await testResetNavigationAndStaleUploads();
+  await testLocalizationAndAria();
+  console.log("Image picker runtime checks passed.");
 }
 
 runTests().catch((error) => {

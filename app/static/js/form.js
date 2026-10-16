@@ -5,7 +5,7 @@ import { api } from "./api.js";
 import { translate, registerRenderer } from "./i18n.js";
 import { showMessage, showApiError, setValidation } from "./feedback.js";
 import { getTags, setTags, commitTagInput } from "./tags.js";
-import { hasPendingUploads, resetUploads } from "./upload.js";
+import { hasPendingUploads, resetImagePickers, syncImagePickers, commitSelections, validateFrontImage } from "./upload.js";
 import { navigate, leavePostcard, showView, currentRouteRequest } from "./routing.js";
 import { getCurrentDetail, dropDetailUnless } from "./detail.js";
 import { deletePostcard } from "./overview.js";
@@ -36,13 +36,14 @@ export function setFormLoading(loading) {
 
 export function openForm(postcard = null) {
   const form = $("#postcard-form");
-  resetUploads();
+  resetImagePickers();
   form.reset();
-  setValidation("front-image-error", form.elements.front_image_path, "requiredFrontImage", false);
+  setValidation("front-image-error", $("#front-image-control"), "requiredFrontImage", false);
   form.elements.id.value = postcard?.id ?? "";
   for (const [key, value] of Object.entries(postcard || {})) {
     if (key !== "tags" && form.elements[key]) form.elements[key].value = value;
   }
+  syncImagePickers();
   setTags(postcard?.tags ?? []);
   $("#form-title").textContent = postcard
     ? translate("editPostcard", { id: postcard.id }) : translate("newPostcard");
@@ -63,11 +64,11 @@ export function initForm() {
       showMessage("uploadPending", {}, true);
       return;
     }
-    const frontImagePath = e.target.elements.front_image_path;
-    if (!setValidation(
-      "front-image-error", frontImagePath, "requiredFrontImage", !frontImagePath.value.trim(),
-    )) return;
+    if (!validateFrontImage()) return;
     commitTagInput();
+    // Upload pending selections now; a failure keeps the selection and
+    // preview intact so the save can simply be retried.
+    if (!await commitSelections()) return;
     const data = Object.fromEntries(new FormData(e.target));
     data.tags = getTags();
     const id = data.id;
@@ -89,11 +90,6 @@ export function initForm() {
     const id = $("#postcard-form").elements.id.value;
     // Step back instead of pushing a new entry, so Back does not reopen the form.
     return leavePostcard(Boolean(id) && String(getCurrentDetail()?.id) === String(id));
-  });
-  $("#postcard-form").elements.front_image_path.addEventListener("input", (event) => {
-    if (event.target.value.trim()) {
-      setValidation("front-image-error", event.target, "requiredFrontImage", false);
-    }
   });
 }
 

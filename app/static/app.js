@@ -7,7 +7,7 @@
 import { initLanguage } from "./js/i18n.js";
 import { initFooter } from "./js/footer.js";
 import { initTags } from "./js/tags.js";
-import { initUploads, resetUploads } from "./js/upload.js";
+import { initImagePickers, resetImagePickers } from "./js/upload.js";
 import { initDetail, openDetail, clearCurrentDetail } from "./js/detail.js";
 import { initForm, openEdit, openForm } from "./js/form.js";
 import { initImport } from "./js/import.js";
@@ -18,7 +18,7 @@ import { initRouting, route } from "./js/routing.js";
 
 initLanguage();
 initTags();
-initUploads();
+initImagePickers();
 initDetail();
 initForm();
 initImport();
@@ -33,7 +33,7 @@ initRouting({
     return loadList();
   },
   onDetailHidden: clearCurrentDetail,
-  onEditHidden: resetUploads,
+  onEditHidden: resetImagePickers,
 });
 route();
 // After route(): the initial view's data request stays first, the version

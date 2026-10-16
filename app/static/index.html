@@ -91,20 +91,44 @@
       <h2 id="form-title" data-i18n="newPostcard">New postcard</h2>
       <form id="postcard-form" novalidate>
         <input type="hidden" name="id">
-        <label><span data-i18n="frontImagePath">Front image path</span>
-          <input name="front_image_path" required aria-describedby="front-image-error">
-        </label>
-        <p id="front-image-error" class="validation-error" role="alert" hidden></p>
-        <div class="file-picker">
+        <div class="image-field">
+          <span class="image-field-label" data-i18n="frontImage">Front image</span>
+          <input type="hidden" name="front_image_path">
           <input type="file" id="front-image-file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
-          <button type="button" id="choose-front-image" data-i18n="chooseFrontImage" aria-describedby="front-image-status">Choose front image</button>
-          <span id="front-image-status" aria-live="polite"></span>
+          <div class="image-picker">
+            <button type="button" id="front-image-control" class="image-control"
+                    data-i18n-aria-label="chooseFrontImage" aria-label="Choose front image"
+                    aria-describedby="front-image-error front-image-status">
+              <img id="front-image-preview" class="image-preview" alt="" hidden>
+              <span id="front-image-placeholder" class="image-placeholder" data-i18n="imagePickerPlaceholder">No image selected. Opens the file picker.</span>
+              <span id="front-image-unavailable" class="image-fallback" data-i18n="imageUnavailable" hidden>Image unavailable</span>
+            </button>
+            <button type="button" id="front-image-clear" class="image-clear" hidden
+                    data-i18n-aria-label="removeFrontImage" aria-label="Remove front image">
+              <span class="icon icon-delete" aria-hidden="true"></span>
+            </button>
+          </div>
+          <p id="front-image-error" class="validation-error" role="alert" hidden></p>
+          <span id="front-image-status" role="status" aria-live="polite"></span>
         </div>
-        <label><span data-i18n="backImagePath">Back image path</span><input name="back_image_path"></label>
-        <div class="file-picker">
+        <div class="image-field">
+          <span class="image-field-label" data-i18n="backImage">Back image</span>
+          <input type="hidden" name="back_image_path">
           <input type="file" id="back-image-file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
-          <button type="button" id="choose-back-image" data-i18n="chooseBackImage" aria-describedby="back-image-status">Choose back image</button>
-          <span id="back-image-status" aria-live="polite"></span>
+          <div class="image-picker">
+            <button type="button" id="back-image-control" class="image-control"
+                    data-i18n-aria-label="chooseBackImage" aria-label="Choose back image"
+                    aria-describedby="back-image-status">
+              <img id="back-image-preview" class="image-preview" alt="" hidden>
+              <span id="back-image-placeholder" class="image-placeholder" data-i18n="imagePickerPlaceholder">No image selected. Opens the file picker.</span>
+              <span id="back-image-unavailable" class="image-fallback" data-i18n="imageUnavailable" hidden>Image unavailable</span>
+            </button>
+            <button type="button" id="back-image-clear" class="image-clear" hidden
+                    data-i18n-aria-label="removeBackImage" aria-label="Remove back image">
+              <span class="icon icon-delete" aria-hidden="true"></span>
+            </button>
+          </div>
+          <span id="back-image-status" role="status" aria-live="polite"></span>
         </div>
         <label><span data-i18n="year">Year</span><input name="year"></label>
         <label><span data-i18n="description">Description</span><textarea name="description" rows="5"></textarea></label>

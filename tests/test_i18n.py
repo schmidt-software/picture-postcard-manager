@@ -77,7 +77,9 @@ class LocalizationTest(unittest.TestCase):
         for error_id in (required["aria-describedby"], "file-error"):
             attrs = next(attrs for _, attrs in self.html.elements if attrs.get("id") == error_id)
             self.assertEqual(attrs["role"], "alert")
-        source = (STATIC / "app.js").read_text()
+        source = "\n".join(
+            file.read_text()
+            for file in [STATIC / "app.js", *sorted((STATIC / "js").glob("*.js"))])
         self.assertNotRegex(source, r"\b(?:confirm|alert|reportValidity)\(")
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is optional")

@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 const path = require("node:path");
+const { bundleSource } = require("./bundle");
 const staticDir = path.join(__dirname, "../app/static");
 
 class Element {
@@ -141,9 +142,8 @@ function setup(saved = null, blockedStorage = false, options = {}) {
     setTimeout: () => 1,
     clearTimeout() {},
   });
-  for (const file of ["languages.js", "app.js"]) {
-    vm.runInContext(fs.readFileSync(path.join(staticDir, file), "utf8"), context);
-  }
+  vm.runInContext(fs.readFileSync(path.join(staticDir, "languages.js"), "utf8"), context);
+  vm.runInContext(bundleSource(staticDir), context);
   return {
     context, elements, all, storage, requests, postcardForm, importForm, windowListeners,
     run: (source) => vm.runInContext(source, context),

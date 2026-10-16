@@ -142,7 +142,7 @@ class UploadTest(ImageApiTest):
         data = PNG + b"\x00" * (images.MAX_IMAGE_BYTES - len(PNG))
         status, result = self.upload(data)
         self.assertEqual((status, result["size"]), (201, images.MAX_IMAGE_BYTES))
-        source = (ROOT / "app" / "static" / "app.js").read_text()
+        source = (ROOT / "app" / "static" / "js" / "upload.js").read_text()
         self.assertIn("const MAX_IMAGE_BYTES = 20 * 1024 * 1024;", source)
 
     def test_missing_or_invalid_length(self):

@@ -5,6 +5,8 @@ standard library only; they do not require Docker or start containers.
 """
 
 import re
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -42,8 +44,8 @@ class ComposeProxyOverlayTest(unittest.TestCase):
         """With the overlay, only the proxy is reachable, not the app."""
         self.assertRegex(self.text, r"ports:\s*!reset\s*\[\]")
 
-    def test_proxy_uses_caddy_image(self):
-        self.assertRegex(self.text, r"image:\s*caddy:\d")
+    def test_proxy_uses_pinned_caddy_image(self):
+        self.assertRegex(self.text, r"image:\s*caddy:2\.\d+")
 
     def test_proxy_publishes_http_and_https(self):
         self.assertIn('"80:80"', self.text)
@@ -100,11 +102,23 @@ class EnvExampleTest(unittest.TestCase):
 
     def test_contains_placeholders_only(self):
         self.assertEqual(self.values["PPM_PROXY_USER"], "change-me")
-        self.assertEqual(self.values["PPM_PROXY_PASSWORD_HASH"], "change-me")
+        self.assertEqual(self.values["PPM_PROXY_PASSWORD_HASH"], "'change-me'")
         self.assertIsNone(BCRYPT_RE.search(self.text))
 
     def test_documents_hash_generation(self):
         self.assertIn("caddy hash-password", self.text)
+
+    def test_hash_placeholder_is_single_quoted(self):
+        """Compose does not interpolate inside single quotes in .env, so the
+        example must show the quoted form (an unquoted bcrypt hash would be
+        mangled: $2a, $14, ... are read as variable references)."""
+        value = self.values["PPM_PROXY_PASSWORD_HASH"]
+        self.assertTrue(value.startswith("'") and value.endswith("'"), value)
+
+    def test_does_not_recommend_dollar_escaping(self):
+        """Regression: escaping $ as $$ in .env reaches the container as a
+        literal $$2a$$14$$... string, which Caddy rejects."""
+        self.assertNotIn("$$", self.text)
 
 
 class SecretHygieneTest(unittest.TestCase):
@@ -134,6 +148,64 @@ class ReadmeTest(unittest.TestCase):
             "caddy hash-password",
         ):
             self.assertIn(phrase, self.text, phrase)
+
+    def test_recommends_single_quoted_hash_not_dollar_escaping(self):
+        """Regression: the README must show the single-quoted hash form and
+        must not tell users to escape $ as $$ (that form reaches the
+        container literally and Caddy rejects it)."""
+        self.assertIn("PPM_PROXY_PASSWORD_HASH='", self.text)
+        self.assertNotIn("$$", self.text)
+
+
+def _docker_available():
+    try:
+        return (
+            subprocess.run(
+                ["docker", "compose", "version"],
+                capture_output=True,
+                timeout=10,
+            ).returncode
+            == 0
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+@unittest.skipUnless(_docker_available(), "docker compose not available")
+class CaddyValidateTest(unittest.TestCase):
+    """Optional: validate the committed Caddyfile with the documented
+    single-quoted .env form, exactly as a user would write it."""
+
+    # Throwaway hash of a throwaway password; not a credential.
+    HASH = "$2a$14$jzKfISfc8sux75jrtH1XKubJp4xZ6pxGoskk8KzX08KS8D/NIl/fC"
+
+    def test_caddyfile_validates_with_documented_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = Path(tmp) / ".env"
+            env_file.write_text(
+                "PPM_PROXY_HOST=localhost\n"
+                "PPM_PROXY_USER=testuser\n"
+                f"PPM_PROXY_PASSWORD_HASH='{self.HASH}'\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    "docker", "compose",
+                    "--env-file", str(env_file),
+                    "-f", str(COMPOSE_BASE),
+                    "-f", str(COMPOSE_PROXY),
+                    "run", "--rm", "--no-deps", "--entrypoint", "",
+                    "proxy", "caddy", "validate",
+                    "--config", "/etc/caddy/Caddyfile",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            output = result.stdout + result.stderr
+            self.assertEqual(result.returncode, 0, output)
+            self.assertIn("Valid configuration", output)
 
 
 if __name__ == "__main__":

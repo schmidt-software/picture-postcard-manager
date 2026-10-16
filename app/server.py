@@ -14,8 +14,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from app.db import Database
-from app import images
+from app import images, thumbs
 from app.images import ImageError, ImageStore
+from app.thumbs import ThumbnailStore
 
 STATIC_DIR = Path(__file__).parent / "static"
 MAX_BODY_BYTES = 50 * 1024 * 1024
@@ -25,6 +26,7 @@ ITEM_PATH = re.compile(r"^/api/postcards/(\d+)$")
 class Handler(BaseHTTPRequestHandler):
     db: Database = None  # injected by make_server
     images: ImageStore = None  # injected by make_server
+    thumbs: ThumbnailStore = None  # injected by make_server
 
     def finish(self):
         """Release this request thread's database connection after the response.
@@ -103,6 +105,21 @@ class Handler(BaseHTTPRequestHandler):
         opened = self.images.open(name)
         if opened is None:
             return self._error(HTTPStatus.NOT_FOUND, images.ERROR_NOT_FOUND)
+        self._send_image(opened)
+
+    def _serve_thumbnail(self, name):
+        """Serve the cached/generated thumbnail, falling back to the original.
+
+        The fallback keeps the overview working without Pillow and for images
+        that cannot be thumbnailed (corrupt or oversized); only an unknown or
+        unservable original is a 404.
+        """
+        opened = self.thumbs.open(name) or self.images.open(name)
+        if opened is None:
+            return self._error(HTTPStatus.NOT_FOUND, images.ERROR_NOT_FOUND)
+        self._send_image(opened)
+
+    def _send_image(self, opened):
         ctype, size, file = opened
         with file:
             self.send_response(HTTPStatus.OK)
@@ -200,6 +217,8 @@ class Handler(BaseHTTPRequestHandler):
             )
         if url.path.startswith("/api/"):
             return self._error(HTTPStatus.NOT_FOUND, "unknown endpoint")
+        if url.path.startswith(thumbs.URL_PREFIX):
+            return self._serve_thumbnail(url.path[len(thumbs.URL_PREFIX):])
         if url.path.startswith(images.URL_PREFIX):
             return self._serve_image(url.path[len(images.URL_PREFIX):])
         return self._serve_static(url.path)
@@ -254,7 +273,9 @@ def default_image_dir(db_path):
 def make_server(host, port, db_path, image_dir=None):
     db = Database(db_path)
     store = ImageStore(image_dir or default_image_dir(db_path))
-    handler = type("BoundHandler", (Handler,), {"db": db, "images": store})
+    handler = type("BoundHandler", (Handler,), {
+        "db": db, "images": store, "thumbs": ThumbnailStore(store),
+    })
     return ThreadingHTTPServer((host, port), handler)
 
 

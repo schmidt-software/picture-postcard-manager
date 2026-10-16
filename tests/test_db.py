@@ -435,6 +435,69 @@ class LocationMigrationTest(unittest.TestCase):
         self.assertEqual(reopened.get(1), first)
         self.assertEqual(reopened.get(1)["tags"], ["x", "Wien", "Tirol"])
 
+    def test_unclean_stored_tags_are_normalized(self):
+        """Valid but unclean arrays are normalized with the tag editor's rules."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "v5.db"
+            make_v5_db(path, [(1, "Wien", "", [])])
+            with closing(sqlite3.connect(path)) as conn, conn:
+                conn.execute(
+                    "UPDATE postcards SET tags = ? WHERE id = 1",
+                    ('[" Donau ", "Donau", "Stadt"]',),
+                )
+            db = Database(path)
+            self.addCleanup(db.close)
+            self.assertEqual(db.get(1)["tags"], ["Donau", "Stadt", "Wien"])
+
+    def test_corrupt_stored_tags_roll_back_the_migration(self):
+        """Valid JSON of the wrong shape must fail loudly, never be coerced.
+
+        Iterating a dict would turn it into its keys and a string into its
+        characters; the migration must instead raise and leave the schema-5
+        database completely intact.
+        """
+        corrupt_values = (
+            '{"k": 1}',          # JSON object: list() would yield its keys
+            '"just-string"',      # JSON string: list() would yield characters
+            "null",               # JSON null
+            "7",                  # JSON number
+            '["ok", 5]',          # array with a non-string element
+            '["ok", "  "]',       # array with a blank string
+        )
+        for corrupt in corrupt_values:
+            with self.subTest(tags=corrupt), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "v5.db"
+                make_v5_db(path, [(1, "Wien", "Tirol", ["keep"]),
+                                  (2, "Graz", "", []),
+                                  (9, "Linz", "", [])])
+                with closing(sqlite3.connect(path)) as conn, conn:
+                    conn.execute("DELETE FROM postcards WHERE id = 9")
+                    conn.execute(
+                        "UPDATE postcards SET tags = ? WHERE id = 2", (corrupt,))
+                with self.assertRaisesRegex(
+                        ValueError, r"postcard 2 has corrupt tags; tags must"):
+                    Database(path)
+                with closing(sqlite3.connect(path)) as conn:
+                    # No partial migration: schema, columns, every row and the
+                    # AUTOINCREMENT sequence are exactly as before.
+                    self.assertEqual(
+                        conn.execute("PRAGMA user_version").fetchone()[0], 5)
+                    columns = [row[1] for row in
+                               conn.execute("PRAGMA table_info(postcards)")]
+                    self.assertIn("place", columns)
+                    self.assertIn("region", columns)
+                    self.assertEqual(
+                        conn.execute("SELECT place, region, tags FROM postcards"
+                                     " WHERE id = 1").fetchone(),
+                        ("Wien", "Tirol", '["keep"]'))
+                    self.assertEqual(
+                        conn.execute("SELECT place, region, tags FROM postcards"
+                                     " WHERE id = 2").fetchone(),
+                        ("Graz", "", corrupt))
+                    self.assertEqual(
+                        conn.execute("SELECT seq FROM sqlite_sequence"
+                                     " WHERE name = 'postcards'").fetchone()[0], 9)
+
     def test_failed_location_migration_rolls_back(self):
         """A failure during the rebuild leaves the schema-5 database intact."""
         class FailingConnection(sqlite3.Connection):

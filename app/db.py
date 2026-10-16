@@ -264,6 +264,17 @@ class Database:
         distinct tag, consistent with the case-sensitive tag editor.
         Existing tags keep their order; the place is appended before the
         region, so equal place and region values produce a single tag.
+
+        Each stored tags value must satisfy the same contract _clean_tags
+        enforces everywhere else: a JSON array of non-blank strings. Any
+        other valid JSON (object, string, number, null, nested arrays,
+        non-string or blank elements) is corrupt data, not something to
+        coerce - iterating a dict would turn it into its keys and a string
+        into characters - so it raises ValueError and rolls back the whole
+        migration, leaving the schema-5 database untouched. Arrays that are
+        valid but unclean (untrimmed whitespace, exact duplicates) are
+        normalized by the same rules, so the migrated row is exactly what
+        the tag editor would have produced.
         Runs inside the startup migration transaction; the obsolete columns
         themselves are removed by _drop_obsolete_columns afterwards.
         """
@@ -272,16 +283,21 @@ class Database:
             return
         selected = ", ".join(("id", "tags", *present))
         for row in conn.execute(f"SELECT {selected} FROM postcards").fetchall():
-            tags = json.loads(row["tags"])
-            merged = list(tags)
+            try:
+                merged = self._clean_tags(json.loads(row["tags"]))
+            except ValueError as exc:
+                raise ValueError(
+                    f"postcard {row['id']} has corrupt tags; {exc}"
+                ) from exc
             for field in present:
                 value = (row[field] or "").strip()
                 if value and value not in merged:
                     merged.append(value)
-            if merged != tags:
+            stored = json.dumps(merged, ensure_ascii=False)
+            if stored != row["tags"]:
                 conn.execute(
                     "UPDATE postcards SET tags = ? WHERE id = ?",
-                    (json.dumps(merged, ensure_ascii=False), row["id"]),
+                    (stored, row["id"]),
                 )
 
     def _drop_obsolete_columns(self, conn, columns):

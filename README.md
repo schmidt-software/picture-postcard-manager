@@ -37,6 +37,8 @@ tests/             unittest-based API, database and localization tests
 data/              Default local (non-Docker) database and images/ location (git-ignored)
 Dockerfile         Container image for server deployment
 compose.yaml       Docker Compose setup
+compose.proxy.yaml Optional overlay: Caddy reverse proxy with TLS and basic auth
+proxy/Caddyfile    Caddy configuration for the proxy overlay
 ```
 
 The frontend is split into small native ES modules under `app/static/js/`;
@@ -445,12 +447,76 @@ stopped; start it again with `docker compose up -d`. Verify your postcards and
 images, then keep `./data` as a backup or remove it yourself. Direct Python deployments with custom storage paths must back up the
 database file and image directory together in the same stopped state.
 
-### Network deployment
+### Access control and network deployment
 
-This Compose setup is for local access; it does not expose a public service.
-The application has no built-in authentication. Any separately configured
-network deployment must provide TLS and access control through a reverse proxy
-(e.g. Caddy, nginx).
+The default Compose setup is for local access only: the app is published on
+`127.0.0.1` and is not reachable from other machines. The application has **no
+built-in authentication**; for network access, use the bundled reverse-proxy
+overlay (or an equivalent setup).
+
+#### Threat model
+
+- **UUID share links are not access control.** They are merely hard to guess;
+  anyone who obtains a link (logs, browser history, forwarded message) can open
+  the postcard, and `GET /api/postcards` lists the entire collection anyway.
+- **The API and `/images/` expose everything.** Without a proxy in front, any
+  client that can reach the port can read, modify and delete all data.
+- The app itself speaks plain HTTP and does not evaluate `X-Forwarded-For` or
+  `X-Forwarded-Proto`; TLS termination and authentication are the proxy's job.
+
+#### Reverse-proxy overlay (Caddy)
+
+`compose.proxy.yaml` adds a [Caddy](https://caddyserver.com/) container that
+terminates TLS and requires HTTP basic auth for the whole site — the UI, every
+API endpoint and `/images/`. With the overlay the app container is no longer
+published at all; Caddy is the only entry point (ports 80/443). The plain
+`docker compose up` behavior is completely unchanged.
+
+1. Create your environment file and set a username and password hash
+   (credentials live only in the git-ignored `.env`, never in the repository):
+
+   ```sh
+   cp .env.example .env
+   docker run --rm caddy:2.10 caddy hash-password --plaintext 'your-password'
+   ```
+
+   Put the username in `PPM_PROXY_USER` and the bcrypt hash in
+   `PPM_PROXY_PASSWORD_HASH`, wrapped in single quotes:
+
+   ```sh
+   PPM_PROXY_PASSWORD_HASH='$2a$14$abc…'
+   ```
+
+   Docker Compose does not interpolate inside single quotes in `.env`, so the
+   `$` characters reach the container unchanged. An unquoted hash is mangled
+   (Compose treats `$2a`, `$14`, … as variable references), so always quote it.
+
+2. Start the stack with both files:
+
+   ```sh
+   docker compose -f compose.yaml -f compose.proxy.yaml up -d --build
+   ```
+
+3. Open `https://localhost` and log in with your credentials.
+
+**TLS options** via `PPM_PROXY_HOST` in `.env`:
+
+- `localhost` (default): Caddy issues a certificate from its internal CA.
+  Browsers warn about it unless you trust that CA; fine for local or LAN use.
+- A real public hostname (DNS pointing at the machine, ports 80/443 reachable):
+  Caddy obtains and renews publicly trusted certificates automatically (ACME).
+
+What the overlay protects: all HTTP access through the proxy requires
+authentication and is encrypted. What it does **not** protect: anyone with
+shell or Docker access on the host can still reach the app container and the
+data volume directly, and basic auth offers a single shared credential with no
+per-user accounts or audit trail. The container healthcheck is unaffected — it
+runs inside the app container against `127.0.0.1` and bypasses the proxy by
+design.
+
+Stop the stack with the same file list
+(`docker compose -f compose.yaml -f compose.proxy.yaml down`); backup and
+restore commands from the previous section work unchanged.
 
 ## Configuration
 

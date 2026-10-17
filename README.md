@@ -60,9 +60,32 @@ running without a module loader.
 ## User guide
 
 Collectors and operators should use
-[docs/user-guide.md](docs/user-guide.md). A later release process is expected
-to attach a PDF built from that file only. The PDF is not stored in Git, and the
-guide source does not hard-code a release version.
+[docs/user-guide.md](docs/user-guide.md). Every published GitHub Release
+attaches a PDF of that guide, built from the exact release-tag commit and
+named `picture-postcard-manager-user-guide-<tag>.pdf` (see
+[Release user-guide PDF](#release-user-guide-pdf)). The PDF is not stored in
+Git, and the guide source does not hard-code a release version: the pipeline
+injects `{{VERSION}}` and `{{GENERATED_ON}}` at build time.
+
+Build the PDF locally with one command (requires Docker; the renderer is the
+digest-pinned `pandoc/latex:3.8.3` container image, so the build is identical
+to CI):
+
+```sh
+python3 tools/pdf/build_pdf.py --version v0.2.0
+```
+
+This renders `docs/user-guide.md` to
+`dist/picture-postcard-manager-user-guide-v0.2.0.pdf` (git-ignored) without
+modifying the source. The generation date defaults to the committer date of
+`HEAD`, so rebuilding the same commit produces the same PDF; override it with
+`--date YYYY-MM-DD`. Validate the result:
+
+```sh
+pip install --require-hashes -r tools/pdf/requirements-validate.txt
+python3 tools/pdf/validate_pdf.py \
+  --pdf dist/picture-postcard-manager-user-guide-v0.2.0.pdf --version v0.2.0
+```
 
 Research that is not part of the user guide lives under `docs/research/`.
 [Image-description services](docs/research/image-description-services.md) is a
@@ -799,6 +822,47 @@ secret: a Mastodon access token for the announcing account on `kanoa.de`
 with the `write:statuses` scope (create it under *Preferences → Development →
 New application*). Without the secret the workflow fails without posting
 anything; the token value itself is never logged.
+
+## Release user-guide PDF
+
+Every published GitHub Release (stable **and** prerelease) automatically
+builds the user guide as a PDF and attaches it as a release asset named
+`picture-postcard-manager-user-guide-<tag>.pdf`
+(workflow: `.github/workflows/release-user-guide.yml`). The guide source is
+taken from `docs/user-guide.md` **at the exact release-tag commit**, never
+from the default branch, and the release tag is validated as strict semver
+and verified to be an ancestor of `main`, exactly like the container-image
+workflow above.
+
+The renderer is the digest-pinned `pandoc/latex:3.8.3` container image
+(pandoc 3.8.3 with TeX Live/XeLaTeX,
+`pandoc/latex@sha256:dd0dd153f681ec264094c04011e34459e8de61fe95712020ab4dfbff1117b015`),
+invoked by `tools/pdf/build_pdf.py`. The injected generation date is the
+committer date of the tag commit and seeds `SOURCE_DATE_EPOCH`, so rebuilding
+the same tag reproduces the same PDF. After the build,
+`tools/pdf/validate_pdf.py` (hash-pinned `pypdf`) checks the PDF magic, page
+count, title, injected version, selectable text, bookmarks, internal and
+external links, absent placeholders, and embedded fonts; only then does a
+separate, minimally privileged job upload the asset. A rerun replaces the
+identically named asset (`gh release upload --clobber`) instead of
+duplicating it, and a build or validation failure fails the workflow without
+uploading anything.
+
+A manual `workflow_dispatch` run of the same workflow backfills the PDF onto
+an **existing** release tag with identical validation. For releases that
+predate the guide (only `v0.1.0`), no `docs/user-guide.md` exists at the tag;
+the workflow then builds the retrospective snapshot committed under
+`docs/releases/v0.1.0/user-guide.md`. That snapshot was audited against the
+application source at `v0.1.0` (visible image-path fields, place/region
+fields, single-tag filter, schema version 5, no version footer) and states
+its retrospective provenance on the first page. The snapshot is frozen
+documentation for that tag and is not updated with new features.
+
+Pull requests that touch the application, documentation, deployment files,
+or workflows build and validate both guides in CI
+(workflow: `.github/workflows/docs-pdf.yml`), so a broken guide fails the PR
+instead of the release. `tests/test_user_guide_pdf.py` checks the pipeline's
+security and consistency properties without Docker.
 
 ## Configuration
 

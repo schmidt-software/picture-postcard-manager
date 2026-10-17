@@ -40,4 +40,9 @@
   on migration and on imports of versions 1-5 (see the README).
 - A user-visible behavior, label, command, configuration, or deployment change updates
   `docs/user-guide.md` in the same pull request. Do not hard-code a release version in
-  that file; the PDF pipeline injects `{{VERSION}}` and `{{GENERATED_ON}}`.
+  that file; the PDF pipeline injects `{{VERSION}}` and `{{GENERATED_ON}}`. CI builds
+  and validates the guide PDF on relevant pull requests (`docs-pdf.yml`), and
+  `tests/test_user_guide.py` / `tests/test_user_guide_pdf.py` enforce guide and
+  pipeline consistency. Generated PDFs (`dist/`) are never committed. Snapshots under
+  `docs/releases/<tag>/` are frozen documentation for already-published releases that
+  predate the guide; do not update them with new features.

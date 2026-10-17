@@ -5,7 +5,7 @@ document_type: user-guide
 language: en
 audience: end-users
 # The PDF pipeline replaces these two placeholders from the validated release
-# tag and the build clock. Do not hard-code a release version in this file.
+# tag and the release commit's date. Do not hard-code a release version in this file.
 version: "{{VERSION}}"
 generated_on: "{{GENERATED_ON}}"
 source: docs/user-guide.md
@@ -38,7 +38,7 @@ the person who runs the application. It is not a contributor guide.
 
 In the repository, `{{VERSION}}` and `{{GENERATED_ON}}` are placeholders. A
 PDF attached to a GitHub Release replaces them with the validated release tag
-and the date that PDF was generated. This file deliberately does not store a
+and the date of the release commit. This file deliberately does not store a
 release number, so the PDF and the running application cannot drift to two
 different hard-coded versions.
 
@@ -1026,7 +1026,7 @@ instead of writing a fallback release number into the PDF.
 - Keep markdown links to headings as in-document links.
 - Build the PDF from this file only. Do not include `docs/research/` or follow a link into it. Research notes are not release-guide content.
 - The only external link that needs to survive is the public project site
-  `https://github.com/schmidt-software/picture-postcard-manager`. Image names
+  <https://github.com/schmidt-software/picture-postcard-manager>. Image names
   and commands are text, not remote images.
 - There are no screenshots. A later screenshot must be regenerated from the
   released interface, stored under `docs/assets/`, given a text alternative

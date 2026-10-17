@@ -849,12 +849,15 @@ duplicating it, and a build or validation failure fails the workflow without
 uploading anything.
 
 A manual `workflow_dispatch` run of the same workflow backfills the PDF onto
-an **existing** release tag with identical validation. For releases that
-predate the guide (only `v0.1.0`), no `docs/user-guide.md` exists at the tag;
-the workflow then builds the retrospective snapshot committed under
-`docs/releases/v0.1.0/user-guide.md`. That snapshot was audited against the
-application source at `v0.1.0` (visible image-path fields, place/region
-fields, single-tag filter, schema version 5, no version footer) and states
+an **existing** release tag with identical validation. Exactly one release
+predates the guide: `v0.1.0`, where no `docs/user-guide.md` exists at the
+tag. Only for that literal tag does the workflow build the retrospective
+snapshot committed under `docs/releases/v0.1.0/user-guide.md`; any other tag
+without a guide at its commit fails the build (there is no generic snapshot
+fallback). That snapshot was audited against the application source at
+`v0.1.0` (visible image-path fields, place/region fields, single-tag filter,
+schema version 5, no version footer, the published
+`ghcr.io/schmidt-software/picture-postcard-manager:0.1.0` image) and states
 its retrospective provenance on the first page. The snapshot is frozen
 documentation for that tag and is not updated with new features.
 

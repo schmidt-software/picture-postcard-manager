@@ -43,6 +43,8 @@
   that file; the PDF pipeline injects `{{VERSION}}` and `{{GENERATED_ON}}`. CI builds
   and validates the guide PDF on relevant pull requests (`docs-pdf.yml`), and
   `tests/test_user_guide.py` / `tests/test_user_guide_pdf.py` enforce guide and
-  pipeline consistency. Generated PDFs (`dist/`) are never committed. Snapshots under
-  `docs/releases/<tag>/` are frozen documentation for already-published releases that
-  predate the guide; do not update them with new features.
+  pipeline consistency. Generated PDFs (`dist/`) are never committed. The snapshot
+  under `docs/releases/v0.1.0/` is frozen documentation for the only release that
+  predates the guide; do not update it with new features, and do not add snapshots
+  for newer tags — releases after v0.1.0 must ship `docs/user-guide.md` at their
+  tag or the release PDF build fails.

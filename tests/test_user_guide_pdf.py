@@ -130,15 +130,88 @@ class ReleaseGuideWorkflowTest(unittest.TestCase):
         self.assertIn("merge-base --is-ancestor", self.text)
         self.assertIn("origin/main", self.text)
 
-    def test_source_selection_prefers_exact_tag_then_snapshot(self):
+    def test_source_selection_exact_tag_then_v010_snapshot_only(self):
         selection = self.text[self.text.index("Select the guide source"):]
+        selection = selection[:selection.index("Derive")]
         tag_index = selection.index("release-src/docs/user-guide.md")
-        snapshot_index = selection.index("docs/releases/$TAG/user-guide.md")
+        snapshot_index = selection.index("docs/releases/v0.1.0/user-guide.md")
         self.assertLess(
             tag_index, snapshot_index,
             "exact-tag documentation must be preferred over the snapshot",
         )
-        self.assertIn("exit 1", selection[:selection.index("Derive")])
+        # The snapshot fallback is hard-coded to the literal tag v0.1.0; no
+        # generic docs/releases/$TAG path may exist anywhere in the workflow.
+        self.assertIn('"$TAG" = "v0.1.0"', selection)
+        self.assertNotIn("docs/releases/$TAG", self.text)
+        self.assertNotIn("docs/releases/${TAG}", self.text)
+        self.assertIn("exit 1", selection)
+
+    @staticmethod
+    def _selection_script():
+        """Extract the source-selection shell script from the workflow."""
+        raw = RELEASE_WORKFLOW.read_text()
+        step = raw[raw.index("Select the guide source"):]
+        run = step[step.index("run: |") + len("run: |"):]
+        lines = []
+        for line in run.splitlines()[1:]:
+            if line.strip() and not line.startswith(" " * 10):
+                break
+            lines.append(line[10:] if len(line) > 10 else "")
+        return "\n".join(lines)
+
+    def _run_selection(self, tag, exact_guide, snapshot):
+        """Run the real selection script against a synthetic tree."""
+        import os
+        import subprocess
+        import tempfile
+
+        script = self._selection_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            if exact_guide:
+                os.makedirs(os.path.join(tmp, "release-src", "docs"))
+                Path(tmp, "release-src", "docs", "user-guide.md").write_text("x")
+            if snapshot:
+                os.makedirs(os.path.join(tmp, "docs", "releases", "v0.1.0"))
+                Path(
+                    tmp, "docs", "releases", "v0.1.0", "user-guide.md"
+                ).write_text("x")
+            out = Path(tmp, "out")
+            out.write_text("")
+            env = dict(os.environ, TAG=tag, GITHUB_OUTPUT=str(out))
+            proc = subprocess.run(
+                ["bash", "-euo", "pipefail", "-c", script],
+                cwd=tmp, env=env, capture_output=True, text=True,
+            )
+            return proc.returncode, out.read_text(), proc.stderr
+
+    def test_selection_uses_exact_tag_guide_when_present(self):
+        code, output, _ = self._run_selection("v0.2.0", True, True)
+        self.assertEqual(code, 0)
+        self.assertIn("source=release-src/docs/user-guide.md", output)
+
+    def test_selection_prerelease_exact_tag_guide_works(self):
+        code, output, _ = self._run_selection("v1.2.3-rc.1", True, True)
+        self.assertEqual(code, 0)
+        self.assertIn("source=release-src/docs/user-guide.md", output)
+
+    def test_selection_v010_without_exact_guide_uses_snapshot(self):
+        code, output, _ = self._run_selection("v0.1.0", False, True)
+        self.assertEqual(code, 0)
+        self.assertIn("source=docs/releases/v0.1.0/user-guide.md", output)
+
+    def test_selection_other_tag_without_exact_guide_fails_hard(self):
+        # A valid semver tag lacking an exact-tag guide must fail even when
+        # the v0.1.0 snapshot exists: no tag may consume another's snapshot.
+        for tag in ("v0.0.9", "v0.3.0", "v2.0.0", "v9.9.9-rc.1"):
+            code, output, stderr = self._run_selection(tag, False, True)
+            self.assertNotEqual(code, 0, f"{tag} must fail without a guide")
+            self.assertNotIn("source=", output)
+            self.assertIn("v0.1.0", stderr)
+
+    def test_selection_v010_with_missing_snapshot_fails(self):
+        code, output, _ = self._run_selection("v0.1.0", False, False)
+        self.assertNotEqual(code, 0)
+        self.assertNotIn("source=", output)
 
     def test_backfill_requires_existing_non_draft_release(self):
         self.assertIn("workflow_dispatch", self.text)
@@ -330,7 +403,6 @@ class SnapshotGuideTest(unittest.TestCase):
             "Tag suggestions",
             "No image selected. Opens the file picker.",
             "schema 6",
-            "ghcr.io/",
         ):
             self.assertNotIn(absent, self.snapshot, f"post-v0.1.0 fact: {absent!r}")
         self.assertIn(
@@ -338,11 +410,37 @@ class SnapshotGuideTest(unittest.TestCase):
             "the snapshot must say v0.1.0 has no version display",
         )
 
-    def test_snapshot_keeps_no_hard_coded_release_version_outside_its_key(self):
+    def test_snapshot_documents_the_published_v010_ghcr_image(self):
+        # v0.1.0 DID publish a multi-arch GHCR image (release-image.yml
+        # existed at that tag and the release body documents it). The
+        # snapshot must document the correct pull reference and the actual
+        # tag aliases of that release.
+        self.assertIn(
+            "ghcr.io/schmidt-software/picture-postcard-manager:0.1.0",
+            self.snapshot,
+        )
+        self.assertIn("linux/amd64", self.flat)
+        self.assertIn("linux/arm64", self.flat)
+        self.assertIn("`v0.1.0` and", self.flat)
+        self.assertIn("`latest`", self.flat)
+        # Only the 0.1.0 release's own references; no other version tag and
+        # no bare moving-tag pull command.
+        refs = re.findall(
+            r"picture-postcard-manager:([0-9A-Za-z.\-]+)", self.snapshot
+        )
+        self.assertTrue(refs, "expected explicit image references")
+        self.assertEqual(set(refs), {"0.1.0"})
+
+    def test_snapshot_keeps_no_hard_coded_release_version_outside_its_keys(self):
         # The only literal version strings allowed are the tag key in the
-        # source path (docs/releases/v0.1.0/) and nothing else.
+        # source path (docs/releases/v0.1.0/), the GHCR image references of
+        # this release, and its tag aliases in the image section.
         body = self.snapshot.replace("docs/releases/v0.1.0/user-guide.md", "")
-        self.assertNotRegex(body, r"\bv\d+\.\d+\.\d+\b")
+        body = body.replace(
+            "ghcr.io/schmidt-software/picture-postcard-manager:0.1.0", ""
+        )
+        body = body.replace("`v0.1.0`", "")
+        self.assertNotRegex(body, r"(?<![\d.])v?\d+\.\d+\.\d+(?![.\d])")
 
     def test_current_guide_still_has_placeholders(self):
         guide = GUIDE.read_text()

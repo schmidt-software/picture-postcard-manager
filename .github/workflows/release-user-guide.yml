@@ -19,12 +19,14 @@
 #   - The guide is taken from `docs/user-guide.md` at the exact release-tag
 #     commit whenever that file exists there. The default branch is never
 #     consulted for releases that ship a guide.
-#   - Releases older than the guide (v0.1.0) have no documentation at their
-#     tag. For those, the build falls back to the retrospective snapshot
-#     committed under `docs/releases/<tag>/user-guide.md`, which is keyed to
-#     that tag, audited against the application source at that tag, and
-#     carries an explicit provenance note in its "About this edition"
-#     section. If neither source exists, the build fails.
+#   - Releases older than the guide have no documentation at their tag.
+#     Exactly one such release exists: v0.1.0. Only for the literal tag
+#     v0.1.0 does the build fall back to the retrospective snapshot
+#     committed at `docs/releases/v0.1.0/user-guide.md` (taken from the
+#     trusted toolchain checkout), which is audited against the application
+#     source at that tag and carries an explicit provenance note in its
+#     "About this edition" section. Any other tag without an exact-tag guide
+#     fails hard; there is no generic snapshot fallback.
 #
 # Reproducibility: the generation date is the committer date of the release
 # tag commit (not the wall clock), and the same timestamp seeds
@@ -135,16 +137,22 @@ jobs:
         env:
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          # Exact-tag documentation first; the committed retrospective
-          # snapshot only for pre-guide releases (see the header comment).
+          # Exact-tag documentation first. The retrospective snapshot is an
+          # explicit, hard-coded exception for v0.1.0 only: that tag predates
+          # the guide, and the snapshot (from the trusted toolchain checkout)
+          # declares its retrospective provenance on its first page. There is
+          # deliberately no generic docs/releases/$TAG fallback: any other tag
+          # without an exact-tag guide fails hard, so a future release can
+          # never silently ship a stale or retrofitted snapshot.
           if [ -f "release-src/docs/user-guide.md" ]; then
             echo "source=release-src/docs/user-guide.md" >> "$GITHUB_OUTPUT"
             echo "Guide source: docs/user-guide.md at tag $TAG"
-          elif [ -f "docs/releases/$TAG/user-guide.md" ]; then
-            echo "source=docs/releases/$TAG/user-guide.md" >> "$GITHUB_OUTPUT"
-            echo "Guide source: retrospective snapshot docs/releases/$TAG/user-guide.md (tag predates the guide)"
+          elif [ "$TAG" = "v0.1.0" ]; then
+            test -f "docs/releases/v0.1.0/user-guide.md"
+            echo "source=docs/releases/v0.1.0/user-guide.md" >> "$GITHUB_OUTPUT"
+            echo "Guide source: retrospective v0.1.0 snapshot docs/releases/v0.1.0/user-guide.md (the only pre-guide release)"
           else
-            echo "::error::No guide source exists for tag $TAG (neither at the tag nor as a snapshot); refusing to build." >&2
+            echo "::error::Tag $TAG has no docs/user-guide.md at the tag commit, and only v0.1.0 may use the retrospective snapshot; refusing to build." >&2
             exit 1
           fi
 

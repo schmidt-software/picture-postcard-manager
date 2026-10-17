@@ -39,7 +39,6 @@ export function openForm(postcard = null) {
   resetImagePickers();
   form.reset();
   setValidation("front-image-error", $("#front-image-control"), "requiredFrontImage", false);
-  setValidation("year-error", form.elements.year, "invalidYear", false);
   form.elements.id.value = postcard?.id ?? "";
   for (const [key, value] of Object.entries(postcard || {})) {
     if (key !== "tags" && form.elements[key]) form.elements[key].value = value;
@@ -69,11 +68,6 @@ export function initForm() {
       return;
     }
     if (!validateFrontImage()) return;
-    const year = e.target.elements.year.value;
-    if (!setValidation(
-      "year-error", e.target.elements.year, "invalidYear",
-      Boolean(year) && !/^[0-9]{4}$/.test(year),
-    )) return;
     if (!beginSubmit()) return;
     // Ties every async completion to the originating form session: a newer
     // openForm/reset/navigation bumps the epoch, and a stale save completion

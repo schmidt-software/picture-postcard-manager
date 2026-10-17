@@ -334,25 +334,41 @@ image loading).
 
 ### Filters
 
-Dropdowns above the overview narrow the collection by an exact
-year or tag; each lists the values that currently exist in the collection.
+Controls above the overview narrow the collection by an exact
+year and by any number of tags; the choices list the values that currently
+exist in the collection. The tag filter uses **AND semantics**: a postcard
+matches only when it carries every selected tag (it may carry additional
+tags). Selected tags appear as removable chips with a **Clear tags** action;
+the add-select offers the remaining tags in a deterministic locale-aware
+order with their stored spelling, excluding already-selected ones. Tag
+matching is exact and case-sensitive, like the tag editor.
 Filters combine with each other, with the search box, with sorting and with
 pagination
 (**Show more postcards** continues the filtered, sorted list), and **Reset filters**
-clears them all. The selection is stored in the browser's local storage and
-restored on reload, like the interface language. The dropdowns refresh
+clears them all, including every selected tag. The selection is stored in the
+browser's local storage and restored on reload, like the interface language;
+a single-tag selection stored by an older version is migrated automatically.
+The selected tags are also mirrored into the overview URL as repeated
+`tag` parameters (for example `?tag=Vienna&tag=Night`), so reload,
+Back/Forward navigation and shared overview URLs keep the selection; URLs
+with a single `tag` parameter keep working. The choices refresh
 whenever the collection changes — after saving, deleting (also directly in
 the overview), importing a JSON file, or a bulk image import — so they always
 list only existing values. A
 selected or restored value that no postcard offers anymore (for example
-because its last postcard was just deleted) remains selectable and simply
-yields an empty result until it is changed or reset.
+because its last postcard was just deleted) remains selected and simply
+yields an empty result until it is removed or reset.
 
 The REST API accepts the same filters as exact-match query parameters on
 `GET /api/postcards` (`year`, `tag`), combinable with `q`,
-`limit` and `offset`. `GET /api/postcards/filters` returns the distinct
-non-empty values for each filterable field. The former `place` and `region`
-filter parameters were removed with their fields and now return HTTP 400.
+`limit` and `offset`. The `tag` parameter may be repeated; a postcard must
+contain every requested tag (exact, case-sensitive element match against the
+JSON tag array, never a substring or raw-JSON text match). Duplicate repeated
+values are deduplicated before the query runs and do not change the result;
+blank `tag` values return HTTP 400. `GET /api/postcards/filters` returns the
+distinct non-empty values for each filterable field. The former `place` and
+`region` filter parameters were removed with their fields and now return
+HTTP 400.
 
 ### Sorting
 
@@ -816,7 +832,7 @@ to `dev`.
 |--------|------------------------------|-----------------------------------------------|
 | GET    | `/api/health`                | Lightweight health check (server and database) |
 | GET    | `/api/version`               | Public version string of the running build (see [Application version](#application-version)) |
-| GET    | `/api/postcards?q=<text>&year=&tag=&sort=<key>&dir=<asc\|desc>&limit=<n>&offset=<n>` | List postcards (search, exact-match filters, optional sorting and pagination) |
+| GET    | `/api/postcards?q=<text>&year=&tag=&tag=&sort=<key>&dir=<asc\|desc>&limit=<n>&offset=<n>` | List postcards (search, exact-match filters — `tag` repeatable with AND semantics — optional sorting and pagination) |
 | GET    | `/api/postcards/filters`     | Distinct values for the overview filters      |
 | POST   | `/api/postcards`             | Create a postcard                             |
 | GET    | `/api/postcards/<id>`        | Get a postcard                                |

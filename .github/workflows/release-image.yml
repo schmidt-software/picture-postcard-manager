@@ -118,6 +118,7 @@ jobs:
             org.opencontainers.image.revision=${{ steps.release_commit.outputs.release_commit }}
             org.opencontainers.image.version=${{ github.event.release.tag_name }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=MIT
 
       - name: Build and push multi-arch image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0

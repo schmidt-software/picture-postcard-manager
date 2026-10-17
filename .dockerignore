@@ -4,6 +4,7 @@
 !Dockerfile
 !.dockerignore
 !requirements-optional.txt
+!LICENSE
 **/__pycache__/
 **/*.pyc
 **/*.db

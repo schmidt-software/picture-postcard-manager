@@ -50,11 +50,31 @@ class YearValidationTest(unittest.TestCase):
             "updated_at": "2026-01-01T00:00:00+00:00",
             "back_image_path": "", "description": "", "tags": [],
         }
-        self.db.import_data({"schema_version": 6, "postcards": [entry]}, mode="replace")
+        self.db.import_data({
+            "format": "picture-postcard-manager", "schema_version": 6,
+            "exported_at": "2026-01-02T00:00:00+00:00", "postcards": [entry],
+        }, mode="replace")
         self.assertEqual(self.db.get(7)["year"], "ca. 1910")
         exported = self.db.export_data()
         self.db.import_data(exported, mode="replace")
         self.assertEqual(self.db.get(7)["year"], "ca. 1910")
+
+    def test_synthetic_metadata_cannot_bypass_validation(self):
+        entry = self.postcard("ca. 1910") | {
+            "id": 7,
+            "uuid": "11111111-1111-4111-8111-111111111111",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "back_image_path": "", "description": "", "tags": [],
+        }
+        for mode, payload in (
+            ("append", {"format": "picture-postcard-manager", "schema_version": 6,
+                        "exported_at": "2026-01-02T00:00:00+00:00", "postcards": [entry]}),
+            ("replace", {"postcards": [entry]}),
+        ):
+            with self.subTest(mode=mode):
+                with self.assertRaisesRegex(ValueError, "exactly four digits"):
+                    self.db.import_data(payload, mode=mode)
 
     def test_mobile_and_accessible_form_contract(self):
         html = Path("app/static/index.html").read_text()

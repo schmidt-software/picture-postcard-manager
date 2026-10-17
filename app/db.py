@@ -700,8 +700,15 @@ class Database:
                         entry = self._merge_location_entry(entry)
                     if payload.get("schema_version", 0) >= 4 and "uuid" not in entry:
                         raise ValueError("schema version 4 and newer postcards must include uuid")
-                    legacy_year = all(
-                        key in entry for key in ("id", "created_at", "updated_at")
+                    legacy_year = (
+                        mode == "replace"
+                        and payload.get("format") == "picture-postcard-manager"
+                        and payload.get("schema_version") in IMPORT_VERSIONS
+                        and isinstance(payload.get("exported_at"), str)
+                        and bool(payload["exported_at"].strip())
+                        and all(key in entry for key in (
+                            "id", "uuid", "created_at", "updated_at"
+                        ))
                     )
                     self._insert(
                         entry,

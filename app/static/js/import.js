@@ -4,6 +4,7 @@ import { $ } from "./dom.js";
 import { api } from "./api.js";
 import { translate, registerRenderer } from "./i18n.js";
 import { showMessage, showApiError, setValidation, askConfirmation } from "./feedback.js";
+import { loadFilterOptions } from "./filters.js";
 
 export function renderFileName() {
   $("#file-name").textContent = $("#import-form").elements.file.files[0]?.name ?? translate("noFile");
@@ -29,6 +30,13 @@ export function initImport() {
       showMessage("imported", { count: result.imported });
       form.reset();
       renderFileName();
+      // Imported postcards may add or remove tag/filter values. Refresh the
+      // shared filter-values cache now so the tag autocomplete (and the
+      // dropdowns) are current even when the user opens the form without
+      // revisiting the overview first. One shared request; a failed or stale
+      // refresh is handled inside loadFilterOptions and never affects the
+      // import result shown above.
+      await loadFilterOptions();
     } catch (err) {
       showApiError(err);
     }

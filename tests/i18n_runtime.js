@@ -23,6 +23,7 @@ class Element {
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
   setAttribute(name, value) { this.attributes[name] = value; }
+  removeAttribute(name) { delete this.attributes[name]; }
   focus() { this.focused = true; }
   select() { this.selected = true; }
   click() { this.clicked = true; }
@@ -79,6 +80,8 @@ function setup(saved = null, blockedStorage = false, options = {}) {
   const requests = [];
   const location = new URL(options.url ?? "http://127.0.0.1:8000/");
   const windowListeners = {};
+  const timers = new Map();
+  let timerId = 0;
   const context = vm.createContext({
     window: {
       location,
@@ -139,13 +142,24 @@ function setup(saved = null, blockedStorage = false, options = {}) {
       if (options.fetch) return options.fetch(url, requestOptions);
       return { ok: true, status: 200, json: async () => [] };
     },
-    setTimeout: () => 1,
-    clearTimeout() {},
+    // Deterministic fake timers: callbacks are stored, never auto-run, and
+    // executed only when a test calls runTimers() explicitly.
+    setTimeout: (callback) => {
+      timers.set(++timerId, callback);
+      return timerId;
+    },
+    clearTimeout: (id) => { timers.delete(id); },
   });
   vm.runInContext(fs.readFileSync(path.join(staticDir, "languages.js"), "utf8"), context);
   vm.runInContext(bundleSource(staticDir), context);
   return {
     context, elements, all, storage, requests, postcardForm, importForm, windowListeners,
+    timers,
+    runTimers: () => {
+      const pending = [...timers.values()];
+      timers.clear();
+      for (const callback of pending) callback();
+    },
     run: (source) => vm.runInContext(source, context),
     get: (id) => elements.get(`#${id}`),
   };

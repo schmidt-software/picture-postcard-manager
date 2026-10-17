@@ -6,7 +6,7 @@
 
 import { initLanguage } from "./js/i18n.js";
 import { initFooter } from "./js/footer.js";
-import { initTags } from "./js/tags.js";
+import { initTags, resetTagSuggestions } from "./js/tags.js";
 import { initImagePickers, resetImagePickers } from "./js/upload.js";
 import { initDetail, openDetail, clearCurrentDetail } from "./js/detail.js";
 import { initForm, openEdit, openForm } from "./js/form.js";
@@ -33,7 +33,12 @@ initRouting({
     return loadList();
   },
   onDetailHidden: clearCurrentDetail,
-  onEditHidden: resetImagePickers,
+  // Leaving the edit view resets the image pickers and cancels any pending
+  // tag-autocomplete popup/timer so nothing outlives the view.
+  onEditHidden() {
+    resetImagePickers();
+    resetTagSuggestions();
+  },
 });
 route();
 // After route(): the initial view's data request stays first, the version

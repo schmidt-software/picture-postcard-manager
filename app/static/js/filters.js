@@ -11,6 +11,19 @@ let filterValues = { year: [], tag: [] };
 // Incremented per filter-values request; stale responses must not overwrite
 // the dropdowns a newer request already rebuilt.
 let filterOptionsRequest = 0;
+// Modules that reuse the cached values (the tag autocomplete) subscribe here
+// instead of issuing their own filter-values requests.
+const filterValuesListeners = [];
+
+export function onFilterValuesLoaded(listener) {
+  filterValuesListeners.push(listener);
+}
+
+// The distinct tags of all existing postcards, as of the last successful
+// filter-values load (server-side order; stored spelling preserved).
+export function getKnownTags() {
+  return [...filterValues.tag];
+}
 
 export function loadSavedFilters() {
   try {
@@ -67,6 +80,7 @@ export async function loadFilterOptions() {
     // The dropdowns keep their previous values; filtering still works.
   }
   renderFilterOptions();
+  for (const listener of filterValuesListeners) listener();
 }
 
 // onChange is injected (the overview's loadList) so this module stays a leaf.

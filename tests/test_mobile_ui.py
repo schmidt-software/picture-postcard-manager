@@ -22,6 +22,10 @@ class MobileUiTest(unittest.TestCase):
         self.assertIn("prefers-reduced-motion: reduce", self.css)
 
     def test_phone_card_layout_has_no_table_scroller(self):
+        for width in (320, 375, 390, 430):
+            with self.subTest(width=width):
+                self.assertLessEqual(width, 700)
+        self.assertNotIn("overflow-x: hidden", self.css)
         block = re.search(r"@media \(max-width: 700px\) \{(.+?)\n\}", self.css, re.S)
         self.assertIsNotNone(block)
         text = block.group(1)
@@ -34,6 +38,14 @@ class MobileUiTest(unittest.TestCase):
             self.assertIn(f'translate("{key}")', self.overview)
         self.assertIn('td.dataset.label = translate(field)', self.overview)
         self.assertGreaterEqual(self.overview.count("dataset.label"), 7)
+
+    def test_mobile_workflows_are_covered_by_responsive_contract(self):
+        block = re.search(r"@media \(max-width: 700px\) \{(.+?)\n\}", self.css, re.S).group(1)
+        for selector in ("header nav button", ".sort-controls", ".filter-controls",
+                         ".tag-add", ".actions", ".image-picker", "tbody tr",
+                         ".detail-heading .actions", ".share-controls"):
+            self.assertIn(selector, block)
+        self.assertIn("form :is(input, textarea, select, button):focus", self.css)
 
     def test_mobile_viewports_are_documented(self):
         guide = Path("docs/user-guide.md").read_text()

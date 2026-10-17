@@ -4,7 +4,7 @@
   font-family: system-ui, sans-serif;
 }
 
-body { margin: 0; color: #1f2328; overflow-x: hidden; }
+body { margin: 0; color: #1f2328; }
 header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
          gap: 1rem; padding: 0.75rem max(1rem, env(safe-area-inset-right)) 0.75rem max(1rem, env(safe-area-inset-left)); border-bottom: 1px solid var(--border); }
 header h1 { font-size: 1.25rem; margin: 0; }
@@ -159,7 +159,9 @@ tbody tr:hover { background: #f6f8fa; }
 footer { padding: 0.75rem max(1rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); border-top: 1px solid var(--border); }
 footer p { margin: 0; font-size: 0.85rem; color: #59636e; overflow-wrap: anywhere; }
 @media (max-width: 480px) {
-  footer { padding: 0.75rem 1rem; }
+  footer { padding: 0.75rem max(1rem, env(safe-area-inset-right))
+                    max(0.75rem, env(safe-area-inset-bottom))
+                    max(1rem, env(safe-area-inset-left)); }
 }
 /* Forced-colors (high-contrast) mode: let the system palette drive the
    footer text so it stays readable instead of keeping the muted gray. */

@@ -31,13 +31,16 @@ export function getKnownTags() {
   return [...filterValues.tag];
 }
 
-// Canonical tag-selection cleanup: strings only, blank values dropped, exact
-// duplicates removed while the first occurrence keeps its position. The
-// selection order is the canonical order everywhere (chips, URL, requests).
+// Canonical tag-selection cleanup: strings only, blank and whitespace-only
+// values dropped, exact duplicates removed while the first occurrence keeps
+// its position. Non-blank values are preserved verbatim (stored spelling,
+// including any surrounding whitespace) - a value that does not match a
+// stored tag simply yields an empty result, never an error. The selection
+// order is the canonical order everywhere (chips, URL, requests).
 function cleanTagSelection(value) {
   const tags = [];
   for (const tag of Array.isArray(value) ? value : []) {
-    if (typeof tag === "string" && tag && !tags.includes(tag)) tags.push(tag);
+    if (typeof tag === "string" && tag.trim() && !tags.includes(tag)) tags.push(tag);
   }
   return tags;
 }
@@ -47,9 +50,11 @@ export function loadSavedFilters() {
     const saved = JSON.parse(localStorage.getItem(FILTER_STORAGE_KEY));
     if (typeof saved?.year === "string") currentFilters.year = saved.year;
     // Legacy single-tag state (a string, pre issue #52) migrates to a
-    // one-element selection; anything invalid falls back to no tags.
+    // one-element selection through the same canonicalization as arrays, so
+    // blank or whitespace-only legacy values are dropped; anything invalid
+    // falls back to no tags.
     if (typeof saved?.tag === "string") {
-      currentFilters.tag = saved.tag ? [saved.tag] : [];
+      currentFilters.tag = cleanTagSelection([saved.tag]);
     } else if (Array.isArray(saved?.tag)) {
       currentFilters.tag = cleanTagSelection(saved.tag);
     }
@@ -87,22 +92,20 @@ function writeTagsToUrl() {
   window.history.replaceState(window.history.state, "", url);
 }
 
-// Entering the overview reconciles URL and state: explicit `tag` parameters
-// (shared URLs, reload, Back/Forward) win over the stored selection; a URL
-// without any `tag` parameter adopts the active selection so the address bar
-// always shows a shareable overview URL. Returns true when the selection
-// changed, so the caller can re-render before loading the list.
+// Entering the overview makes the URL authoritative for the tag selection:
+// the repeated `tag` parameters of the current URL (shared links, reload,
+// Back/Forward) are parsed, canonicalized and applied, and a URL without any
+// `tag` parameter means no tag filter - the previously active or stored
+// selection is cleared and persisted, never re-injected into a bare URL.
+// Returns true when the selection changed, so the caller can re-render
+// before loading the list.
 export function syncFiltersFromUrl() {
-  if (new URLSearchParams(window.location.search).has("tag")) {
-    const tags = tagsFromUrl();
-    const changed = JSON.stringify(tags) !== JSON.stringify(currentFilters.tag);
-    currentFilters.tag = tags;
-    if (changed) saveFilters();
-    writeTagsToUrl(); // canonicalize duplicates/blanks in the address bar
-    return changed;
-  }
-  writeTagsToUrl();
-  return false;
+  const tags = tagsFromUrl();
+  const changed = JSON.stringify(tags) !== JSON.stringify(currentFilters.tag);
+  currentFilters.tag = tags;
+  if (changed) saveFilters();
+  writeTagsToUrl(); // canonicalize duplicates/blanks in the address bar
+  return changed;
 }
 
 function announceTagFilter(key, params = {}) {

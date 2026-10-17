@@ -349,8 +349,11 @@ clears them all, including every selected tag. The selection is stored in the
 browser's local storage and restored on reload, like the interface language;
 a single-tag selection stored by an older version is migrated automatically.
 The selected tags are also mirrored into the overview URL as repeated
-`tag` parameters (for example `?tag=Vienna&tag=Night`), so reload,
-Back/Forward navigation and shared overview URLs keep the selection; URLs
+`tag` parameters (for example `?tag=Vienna&tag=Night`). On entering the
+overview the URL is authoritative: its tag parameters are applied over any
+stored selection, and a URL without `tag` parameters means no tag filter —
+so reload, Back/Forward navigation and shared overview URLs always show
+exactly the selection they encode; URLs
 with a single `tag` parameter keep working. The choices refresh
 whenever the collection changes — after saving, deleting (also directly in
 the overview), importing a JSON file, or a bulk image import — so they always

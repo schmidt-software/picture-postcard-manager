@@ -172,6 +172,13 @@ async function runTests() {
   legacyEmpty.run("loadSavedFilters(); renderFilterOptions();");
   assert.deepEqual(chipTexts(legacyEmpty), []);
   assert.equal(legacyEmpty.get("filter-reset").hidden, true);
+  // A legacy whitespace-only saved string is dropped like a blank one.
+  const legacyBlank = setup();
+  legacyBlank.storage.set("picture-postcard-manager-filters",
+    '{"year":"","tag":"   "}');
+  legacyBlank.run("loadSavedFilters(); renderFilterOptions();");
+  assert.deepEqual(chipTexts(legacyBlank), []);
+  assert.equal(legacyBlank.get("filter-reset").hidden, true);
 
   // A stored filter from before the removal of place/region is ignored for
   // the removed keys but keeps the surviving ones.
@@ -183,7 +190,8 @@ async function runTests() {
   assert.equal(JSON.stringify(legacy.run("FILTER_KEYS")), '["year","tag"]');
 
   // Invalid stored values fall back to no filters; stored arrays are
-  // canonicalized (blanks and non-strings dropped, duplicates removed).
+  // canonicalized (blanks, whitespace-only values and non-strings dropped,
+  // duplicates removed).
   const invalid = setup();
   invalid.storage.set("picture-postcard-manager-filters", "not json");
   invalid.run("loadSavedFilters(); renderFilterOptions();");
@@ -191,7 +199,7 @@ async function runTests() {
   assert.equal(invalid.get("filter-reset").hidden, true);
   const dirty = setup();
   dirty.storage.set("picture-postcard-manager-filters",
-    '{"year":"","tag":["A","A","",5,"B"]}');
+    '{"year":"","tag":["A","A",""," ","\\t",5,"B"]}');
   dirty.run("loadSavedFilters(); renderFilterOptions();");
   assert.deepEqual(chipTexts(dirty), ["A", "B"]);
 
@@ -204,16 +212,17 @@ async function runTests() {
   console.log("Filter runtime checks passed.");
 }
 
-// URL round trip: repeated tag parameters are parsed on entering the
-// overview, win over the stored selection, are canonicalized (duplicates and
-// blanks dropped) and survive navigation. Hostile and Unicode values pass
-// through URLSearchParams escaping unchanged.
+// URL round trip: the URL is authoritative on entering the overview. Its
+// repeated tag parameters are parsed, canonicalized (duplicates, blanks and
+// whitespace-only values dropped) and applied over any stored selection; a
+// URL without tag parameters means no tag filter. Hostile and Unicode
+// values pass through URLSearchParams escaping unchanged.
 async function urlTests() {
   const hostile = "<script>&=?#%\"'";
   const unicode = "Wien Café 😀";
   const shared = setup(null, false, {
     url: "http://127.0.0.1:8000/?tag=street&tag=" +
-      encodeURIComponent(hostile) + "&tag=street&tag=&tag=" +
+      encodeURIComponent(hostile) + "&tag=street&tag=&tag=%20%20&tag=" +
       encodeURIComponent(unicode),
   });
   shared.storage.set("picture-postcard-manager-filters",
@@ -225,14 +234,16 @@ async function urlTests() {
   shared.run("loadSavedFilters(); renderFilterOptions();");
   await shared.run("route()");
   await new Promise(setImmediate);
-  // URL wins over storage; duplicates and blanks are dropped, order kept.
+  // URL wins over storage; duplicates, blanks and whitespace-only values are
+  // dropped, order kept.
   assert.deepEqual(chipTexts(shared), ["street", hostile, unicode]);
   // The canonical URL contains each value exactly once, properly escaped.
   assert.deepEqual(urlTags(shared), ["street", hostile, unicode]);
   const canonical = new URL(shared.context.window.location.href);
   assert.ok(!canonical.search.includes("<script>"),
     "special characters must be escaped in the URL");
-  // The list request repeats the (escaped) tag parameters.
+  // The list request repeats the (escaped) tag parameters; no blank value is
+  // ever forwarded to the backend.
   const listUrl = shared.requests.find((r) => r.url.startsWith("/api/postcards?"));
   assert.deepEqual(new URLSearchParams(listUrl.url.split("?")[1]).getAll("tag"),
     ["street", hostile, unicode]);
@@ -241,20 +252,50 @@ async function urlTests() {
     JSON.parse(shared.storage.get("picture-postcard-manager-filters")).tag,
     ["street", hostile, unicode]);
 
-  // A URL without tag parameters adopts the active selection, so the address
-  // bar always shows a shareable overview URL.
-  const adopting = setup();
-  adopting.storage.set("picture-postcard-manager-filters",
-    '{"year":"","tag":["Kept"]}');
-  adopting.context.fetch = async (url) => {
-    adopting.requests.push({ url });
+  // A bare URL (no tag parameters) is authoritative too: previously active
+  // and stored tags are cleared and the cleared state is persisted, so a
+  // direct or shared link without tags reliably means no tag filter.
+  const bare = setup();
+  bare.storage.set("picture-postcard-manager-filters",
+    '{"year":"","tag":["Stored tag"]}');
+  bare.context.fetch = async (url) => {
+    bare.requests.push({ url });
     return { ok: true, status: 200, json: async () => [] };
   };
-  adopting.run("loadSavedFilters(); renderFilterOptions();");
-  await adopting.run("route()");
+  bare.run("loadSavedFilters(); renderFilterOptions();");
+  assert.deepEqual(chipTexts(bare), ["Stored tag"]);
+  await bare.run("route()");
   await new Promise(setImmediate);
-  assert.deepEqual(chipTexts(adopting), ["Kept"]);
-  assert.deepEqual(urlTags(adopting), ["Kept"]);
+  assert.deepEqual(chipTexts(bare), [], "bare URL must clear active tags");
+  assert.deepEqual(urlTags(bare), [], "cleared tags must not be re-injected");
+  assert.deepEqual(
+    JSON.parse(bare.storage.get("picture-postcard-manager-filters")).tag, [],
+    "the cleared selection must be persisted");
+  const bareList = bare.requests.find((r) => r.url.startsWith("/api/postcards?"));
+  assert.ok(!new URLSearchParams(bareList.url.split("?")[1]).has("tag"),
+    bareList.url);
+
+  // A URL whose tag parameters are all blank/whitespace-only behaves like a
+  // bare URL: zero chips, zero stored tags, zero URL parameters, and no
+  // blank value reaches the backend (which would answer HTTP 400).
+  const blankOnly = setup(null, false, {
+    url: "http://127.0.0.1:8000/?tag=&tag=%20&tag=%09",
+  });
+  blankOnly.context.fetch = async (url) => {
+    blankOnly.requests.push({ url });
+    return { ok: true, status: 200, json: async () => [] };
+  };
+  await blankOnly.run("route()");
+  await new Promise(setImmediate);
+  assert.deepEqual(chipTexts(blankOnly), []);
+  assert.deepEqual(urlTags(blankOnly), []);
+  // Nothing changed relative to the empty default, so nothing needs to be
+  // persisted; stored state, if any, must not contain tags.
+  const storedBlank = blankOnly.storage.get("picture-postcard-manager-filters");
+  assert.deepEqual(storedBlank === undefined ? [] : JSON.parse(storedBlank).tag, []);
+  const blankList = blankOnly.requests.find((r) => r.url.startsWith("/api/postcards?"));
+  assert.ok(!new URLSearchParams(blankList.url.split("?")[1]).has("tag"),
+    blankList.url);
 
   // Back/Forward: entering the overview again re-reads the tag parameters of
   // the restored URL, so history navigation restores the selection.
@@ -277,6 +318,49 @@ async function urlTests() {
   await nav.context.window.history.go(1);
   await new Promise(setImmediate);
   assert.deepEqual(chipTexts(nav), ["One"]);
+
+  // Back/Forward to an overview URL without tag parameters clears the
+  // selection: the URL is authoritative in both directions. History is
+  // built only through natural app operations: a bare overview entry, a
+  // data-view entry, a second overview entry that then gets a tag (selection
+  // changes use replaceState, so only view navigations create entries).
+  const cleared = setup();
+  cleared.context.fetch = async (url) => {
+    cleared.requests.push({ url });
+    return { ok: true, status: 200, json: async () => [] };
+  };
+  await cleared.run("route()"); // entry 1: bare overview
+  await new Promise(setImmediate);
+  await cleared.run('navigate("data")'); // entry 2: data view (bare URL)
+  await cleared.run('navigate("browse")'); // entry 3: overview
+  await new Promise(setImmediate);
+  await selectTag(cleared, "Berlin"); // replaceState: entry 3 now carries the tag
+  assert.deepEqual(urlTags(cleared), ["Berlin"]);
+  await cleared.run('navigate("data")'); // entry 4: data view (tagged URL)
+  // Back returns to the tagged overview entry...
+  await cleared.context.window.history.go(-1);
+  await new Promise(setImmediate);
+  assert.deepEqual(chipTexts(cleared), ["Berlin"]);
+  // ...and Back across the data entry to the original bare overview entry
+  // clears the chips, the stored selection and the request parameters.
+  await cleared.context.window.history.go(-1); // entry 2: data view
+  await cleared.context.window.history.go(-1); // entry 1: bare overview
+  await new Promise(setImmediate);
+  assert.deepEqual(chipTexts(cleared), [],
+    "Back to a bare overview URL must clear the selection");
+  assert.deepEqual(urlTags(cleared), []);
+  assert.deepEqual(
+    JSON.parse(cleared.storage.get("picture-postcard-manager-filters")).tag, []);
+  const lastList = [...cleared.requests].reverse()
+    .find((r) => r.url.startsWith("/api/postcards?"));
+  assert.ok(!new URLSearchParams(lastList.url.split("?")[1]).has("tag"),
+    lastList.url);
+  // Forward restores the tagged overview entry and its selection.
+  await cleared.context.window.history.go(1); // entry 2: data view
+  await cleared.context.window.history.go(1); // entry 3: tagged overview
+  await new Promise(setImmediate);
+  assert.deepEqual(chipTexts(cleared), ["Berlin"],
+    "Forward to a tagged overview URL must restore the selection");
 }
 
 function makeItem(id, year) {

@@ -110,6 +110,7 @@ function setup(saved = null, blockedStorage = false, options = {}) {
     },
     navigator: {},
     URL,
+    URLSearchParams,
     document: {
       documentElement: {},
       querySelector: (selector) => elements.get(selector),

@@ -28,7 +28,8 @@ EDITABLE_FIELDS = (*TEXT_FIELDS, "tags")
 RECORD_FIELDS = (*EDITABLE_FIELDS, "id", "uuid", "created_at", "updated_at")
 # User-selectable overview sort keys -> record fields.
 SORT_FIELDS = {"year": "year", "updated": "updated_at"}
-# Fields the overview can filter by exact value; "tag" matches a single tag.
+# Fields the overview can filter by exact value; "tag" accepts one tag or a
+# list of tags that must all be present (AND semantics, issue #52).
 FILTER_FIELDS = ("year",)
 
 SCHEMA_TEMPLATE = """
@@ -434,11 +435,41 @@ class Database:
         return value
 
     @staticmethod
+    def _clean_tag_filter(value):
+        """Validate and canonicalize the requested tag filter values.
+
+        Accepts a single tag or a list of tags (repeated `tag` query
+        parameters). Exact duplicates are dropped before the query runs,
+        keeping the first occurrence's position, so repeating a value never
+        changes the result. Blank or non-string values are rejected with
+        ValueError (HTTP 400 at the API); an empty list imposes no
+        restriction.
+        """
+        tags = [value] if isinstance(value, str) else value
+        if not isinstance(tags, (list, tuple)):
+            raise ValueError("tag filter must be a string or a list of strings")
+        requested = []
+        for tag in tags:
+            if not isinstance(tag, str):
+                raise ValueError("tag filter must be a string or a list of strings")
+            if not tag.strip():
+                raise ValueError("tag filter must not be blank")
+            if tag not in requested:
+                requested.append(tag)
+        return requested
+
+    @staticmethod
     def _match_clause(query, filters):
         """Build the WHERE clause for a search query combined with filters.
 
         `filters` maps FILTER_FIELDS names to exact values and/or "tag" to a
-        single tag; all filters must match and combine with the search query.
+        single tag or a list of tags; all filters must match and combine
+        with the search query. Multiple tags use AND semantics (issue #52):
+        a postcard matches only when every requested tag exists as a
+        distinct element of its JSON tag array - one parameterized EXISTS
+        per distinct tag against json_each, so matching is exact and
+        case-sensitive, never a substring or raw-JSON text comparison, and
+        a card may carry additional tags beyond the requested ones.
         """
         clauses = []
         params = []
@@ -450,12 +481,15 @@ class Database:
             ) + ")")
             params.extend([f"%{query}%"] * (len(TEXT_FIELDS) + 1))
         for field, value in (filters or {}).items():
+            if field == "tag":
+                for tag in Database._clean_tag_filter(value):
+                    clauses.append(
+                        "EXISTS (SELECT 1 FROM json_each(postcards.tags) WHERE value = ?)")
+                    params.append(tag)
+                continue
             if not isinstance(value, str):
                 raise ValueError(f"{field} filter must be a string")
-            if field == "tag":
-                clauses.append(
-                    "EXISTS (SELECT 1 FROM json_each(postcards.tags) WHERE value = ?)")
-            elif field in FILTER_FIELDS:
+            if field in FILTER_FIELDS:
                 clauses.append(f"{field} = ?")
             else:
                 raise ValueError(

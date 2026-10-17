@@ -11,7 +11,7 @@ import sqlite3
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlparse
 
 from app.db import Database
 from app import images, thumbs
@@ -208,9 +208,20 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/api/postcards":
             # Obsolete place/region parameters are forwarded so the database
             # rejects them with the regular validation error (HTTP 400)
-            # instead of silently ignoring them.
+            # instead of silently ignoring them. The tag filter accepts
+            # repeated parameters (?tag=A&tag=B) with AND semantics; all
+            # values are forwarded so the database deduplicates them and
+            # rejects blank values with HTTP 400 (issue #52).
             filters = {name: params[name][0]
-                       for name in ("place", "region", "year", "tag") if name in params}
+                       for name in ("place", "region", "year") if name in params}
+            # The tag filter always re-parses the raw query with blank values
+            # kept: parse_qs drops them, but a blank tag parameter must hit
+            # the documented validation (HTTP 400) even when other non-blank
+            # tag values are present.
+            tags = [value for name, value in
+                    parse_qsl(url.query, keep_blank_values=True) if name == "tag"]
+            if tags:
+                filters["tag"] = tags
             try:
                 limit, offset = self._page_params(params)
                 items = self.db.list(

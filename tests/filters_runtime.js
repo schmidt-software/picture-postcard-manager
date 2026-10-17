@@ -8,9 +8,28 @@ const values = {
   tag: ["alte Ansicht", "Berlin, Mitte", "street"],
 };
 
+function chipTexts(ui) {
+  return ui.get("filter-tag-list").children.map((li) => li.children[0].textContent);
+}
+
+function tagChoices(ui) {
+  return ui.get("filter-tag").children.map((option) => option.textContent).slice(1);
+}
+
+async function selectTag(ui, tag) {
+  ui.get("filter-tag").value = tag;
+  await ui.get("filter-tag").emit("change");
+}
+
+function urlTags(ui) {
+  return new URLSearchParams(
+    new URL(ui.context.window.location.href).search).getAll("tag");
+}
+
 async function runTests() {
   const ui = setup();
   const { run, get, context, requests } = ui;
+  const flush = () => new Promise(setImmediate);
   context.fetch = async (url) => {
     requests.push({ url });
     return {
@@ -19,56 +38,140 @@ async function runTests() {
     };
   };
 
-  // Opening the overview loads the available filter values into the dropdowns.
+  // Opening the overview loads the available filter values into the controls.
   await run('showView("browse")');
-  await new Promise(setImmediate);
+  await flush();
   assert.equal(get("filter-year").children.length, 3); // All + 2 values
   assert.equal(get("filter-year").children[0].textContent, "All");
-  assert.equal(get("filter-tag").children[3].textContent, "street");
+  // The tag add-select offers all known tags after a placeholder, in a
+  // deterministic locale-aware order with the stored spelling.
+  assert.deepEqual(tagChoices(ui), ["alte Ansicht", "Berlin, Mitte", "street"]);
   assert.equal(get("filter-reset").hidden, true);
+  assert.equal(get("filter-tag-clear").hidden, true);
   // The removed place/region filter dropdowns no longer exist.
   assert.equal(get("filter-place"), undefined);
   assert.equal(get("filter-region"), undefined);
 
-  // Selecting a filter requests a filtered list and shows the reset button.
+  // Selecting a tag adds a chip, requests a filtered list, shows reset and
+  // clear-all, removes the chosen tag from the choices and announces it.
   requests.length = 0;
-  get("filter-tag").value = "Berlin, Mitte";
-  await get("filter-tag").emit("change");
-  assert.ok(requests.at(-1).url.includes("tag=Berlin%2C%20Mitte"), requests.at(-1).url);
+  await selectTag(ui, "Berlin, Mitte");
+  assert.ok(requests.at(-1).url.includes("tag=Berlin%2C+Mitte")
+    || requests.at(-1).url.includes("tag=Berlin%2C%20Mitte"), requests.at(-1).url);
+  assert.deepEqual(chipTexts(ui), ["Berlin, Mitte"]);
+  assert.deepEqual(tagChoices(ui), ["alte Ansicht", "street"]);
   assert.equal(get("filter-reset").hidden, false);
+  assert.equal(get("filter-tag-clear").hidden, false);
+  assert.equal(get("filter-tag-status").textContent, "Tag filter Berlin, Mitte added.");
+  assert.equal(get("filter-tag").focused, true, "focus stays on the add-select");
+  // The select returns to the placeholder so another tag can be added.
+  assert.equal(get("filter-tag").value, "");
+  // The chip's remove button carries a localized accessible name.
+  const chip = get("filter-tag-list").children[0];
+  assert.equal(chip.children[1].attributes["aria-label"],
+    "Remove tag filter Berlin, Mitte");
+  // The selection is mirrored into the URL as a repeated tag parameter.
+  assert.deepEqual(urlTags(ui), ["Berlin, Mitte"]);
+
+  // Adding a second tag keeps the first; the request repeats the parameter in
+  // selection order (AND semantics on the server).
+  await selectTag(ui, "street");
+  assert.deepEqual(chipTexts(ui), ["Berlin, Mitte", "street"]);
+  let url = requests.at(-1).url;
+  const tagParams = new URLSearchParams(url.split("?")[1]).getAll("tag");
+  assert.deepEqual(tagParams, ["Berlin, Mitte", "street"]);
+  assert.deepEqual(urlTags(ui), ["Berlin, Mitte", "street"]);
 
   // Filters combine with each other and with search.
   get("filter-year").value = "1910";
   await get("filter-year").emit("change");
   get("search").value = "color";
   await run("loadList()");
-  const url = requests.at(-1).url;
-  assert.ok(url.includes("q=color") && url.includes("year=1910")
-    && url.includes("tag=Berlin%2C%20Mitte"), url);
+  url = requests.at(-1).url;
+  assert.ok(url.includes("q=color") && url.includes("year=1910"), url);
+  assert.deepEqual(new URLSearchParams(url.split("?")[1]).getAll("tag"),
+    ["Berlin, Mitte", "street"]);
 
-  // The selection is persisted and restored.
+  // The selection is persisted (as an array) and restored.
   const saved = JSON.parse(ui.storage.get("picture-postcard-manager-filters"));
-  assert.equal(saved.tag, "Berlin, Mitte");
+  assert.deepEqual(saved.tag, ["Berlin, Mitte", "street"]);
   assert.equal(saved.year, "1910");
 
-  // Reset clears every filter, hides the button and reloads.
+  // Removing one chip keeps the others, moves focus to the next chip and
+  // updates URL and request.
+  requests.length = 0;
+  await get("filter-tag-list").children[0].children[1].emit("click");
+  assert.deepEqual(chipTexts(ui), ["street"]);
+  assert.deepEqual(urlTags(ui), ["street"]);
+  assert.equal(get("filter-tag-status").textContent, "Tag filter Berlin, Mitte removed.");
+  assert.equal(get("filter-tag-list").children[0].children[1].focused, true,
+    "focus moves to the chip at the removed position");
+  assert.deepEqual(new URLSearchParams(requests.at(-1).url.split("?")[1]).getAll("tag"),
+    ["street"]);
+
+  // Removing the last chip moves focus to the add-select.
+  get("filter-tag").focused = false;
+  await get("filter-tag-list").children[0].children[1].emit("click");
+  assert.deepEqual(chipTexts(ui), []);
+  assert.deepEqual(urlTags(ui), []);
+  assert.equal(get("filter-tag").focused, true);
+  assert.equal(get("filter-tag-clear").hidden, true);
+
+  // Clear-all removes every selected tag at once.
+  await selectTag(ui, "street");
+  await selectTag(ui, "alte Ansicht");
+  assert.deepEqual(chipTexts(ui), ["street", "alte Ansicht"]);
+  await get("filter-tag-clear").emit("click");
+  assert.deepEqual(chipTexts(ui), []);
+  assert.deepEqual(urlTags(ui), []);
+  assert.equal(get("filter-tag-status").textContent, "All tag filters removed.");
+
+  // Reset clears every filter, hides the button, clears the URL and reloads.
+  await selectTag(ui, "street");
   await get("filter-reset").emit("click");
   assert.equal(get("filter-reset").hidden, true);
+  assert.deepEqual(chipTexts(ui), []);
+  assert.deepEqual(urlTags(ui), []);
   assert.ok(!requests.at(-1).url.includes("tag="), requests.at(-1).url);
-  assert.equal(JSON.parse(ui.storage.get("picture-postcard-manager-filters")).tag, "");
+  assert.deepEqual(
+    JSON.parse(ui.storage.get("picture-postcard-manager-filters")).tag, []);
 
-  // Localized labels: "All" follows the language.
+  // Localized labels: "All", the add placeholder and the fieldset legend
+  // follow the language; announcements are localized too.
   run('applyLanguage("de")');
   assert.equal(get("filter-year").children[0].textContent, "Alle");
+  assert.equal(get("filter-tag").children[0].textContent, "Schlagwort hinzufügen…");
+  await selectTag(ui, "street");
+  assert.equal(get("filter-tag-status").textContent,
+    "Schlagwort-Filter street hinzugefügt.");
+  assert.equal(get("filter-tag-list").children[0].children[1].attributes["aria-label"],
+    "Schlagwort-Filter street entfernen");
+  await get("filter-reset").emit("click");
   run('applyLanguage("en")');
 
-  // A restored filter value missing from the options is kept selectable.
+  // A restored selection with tags missing from the options is kept as
+  // removable chips (stale tags stay selected, never silently dropped).
   const restored = setup();
   restored.storage.set("picture-postcard-manager-filters",
-    '{"year":"","tag":"Ghost town"}');
+    '{"year":"","tag":["Ghost town","street"]}');
   restored.run("loadSavedFilters(); renderFilterOptions();");
-  assert.equal(restored.get("filter-tag").value, "Ghost town");
+  assert.deepEqual(chipTexts(restored), ["Ghost town", "street"]);
   assert.equal(restored.get("filter-reset").hidden, false);
+
+  // Legacy single-tag storage (a string, pre issue #52) migrates to a
+  // one-element selection; an empty string means no tags.
+  const legacySingle = setup();
+  legacySingle.storage.set("picture-postcard-manager-filters",
+    '{"year":"1910","tag":"Old town"}');
+  legacySingle.run("loadSavedFilters(); renderFilterOptions();");
+  assert.deepEqual(chipTexts(legacySingle), ["Old town"]);
+  assert.equal(legacySingle.get("filter-year").value, "1910");
+  const legacyEmpty = setup();
+  legacyEmpty.storage.set("picture-postcard-manager-filters",
+    '{"year":"","tag":""}');
+  legacyEmpty.run("loadSavedFilters(); renderFilterOptions();");
+  assert.deepEqual(chipTexts(legacyEmpty), []);
+  assert.equal(legacyEmpty.get("filter-reset").hidden, true);
 
   // A stored filter from before the removal of place/region is ignored for
   // the removed keys but keeps the surviving ones.
@@ -79,19 +182,101 @@ async function runTests() {
   assert.equal(legacy.get("filter-year").value, "1910");
   assert.equal(JSON.stringify(legacy.run("FILTER_KEYS")), '["year","tag"]');
 
-  // Invalid stored values fall back to no filters.
+  // Invalid stored values fall back to no filters; stored arrays are
+  // canonicalized (blanks and non-strings dropped, duplicates removed).
   const invalid = setup();
   invalid.storage.set("picture-postcard-manager-filters", "not json");
   invalid.run("loadSavedFilters(); renderFilterOptions();");
   assert.equal(invalid.get("filter-year").value, "");
   assert.equal(invalid.get("filter-reset").hidden, true);
+  const dirty = setup();
+  dirty.storage.set("picture-postcard-manager-filters",
+    '{"year":"","tag":["A","A","",5,"B"]}');
+  dirty.run("loadSavedFilters(); renderFilterOptions();");
+  assert.deepEqual(chipTexts(dirty), ["A", "B"]);
 
+  await urlTests();
   await combinationTests();
   await raceTests();
   await runRaceTests();
   await refreshTests();
 
   console.log("Filter runtime checks passed.");
+}
+
+// URL round trip: repeated tag parameters are parsed on entering the
+// overview, win over the stored selection, are canonicalized (duplicates and
+// blanks dropped) and survive navigation. Hostile and Unicode values pass
+// through URLSearchParams escaping unchanged.
+async function urlTests() {
+  const hostile = "<script>&=?#%\"'";
+  const unicode = "Wien Café 😀";
+  const shared = setup(null, false, {
+    url: "http://127.0.0.1:8000/?tag=street&tag=" +
+      encodeURIComponent(hostile) + "&tag=street&tag=&tag=" +
+      encodeURIComponent(unicode),
+  });
+  shared.storage.set("picture-postcard-manager-filters",
+    '{"year":"","tag":["Stored tag"]}');
+  shared.context.fetch = async (url) => {
+    shared.requests.push({ url });
+    return { ok: true, status: 200, json: async () => [] };
+  };
+  shared.run("loadSavedFilters(); renderFilterOptions();");
+  await shared.run("route()");
+  await new Promise(setImmediate);
+  // URL wins over storage; duplicates and blanks are dropped, order kept.
+  assert.deepEqual(chipTexts(shared), ["street", hostile, unicode]);
+  // The canonical URL contains each value exactly once, properly escaped.
+  assert.deepEqual(urlTags(shared), ["street", hostile, unicode]);
+  const canonical = new URL(shared.context.window.location.href);
+  assert.ok(!canonical.search.includes("<script>"),
+    "special characters must be escaped in the URL");
+  // The list request repeats the (escaped) tag parameters.
+  const listUrl = shared.requests.find((r) => r.url.startsWith("/api/postcards?"));
+  assert.deepEqual(new URLSearchParams(listUrl.url.split("?")[1]).getAll("tag"),
+    ["street", hostile, unicode]);
+  // The canonicalized selection is persisted.
+  assert.deepEqual(
+    JSON.parse(shared.storage.get("picture-postcard-manager-filters")).tag,
+    ["street", hostile, unicode]);
+
+  // A URL without tag parameters adopts the active selection, so the address
+  // bar always shows a shareable overview URL.
+  const adopting = setup();
+  adopting.storage.set("picture-postcard-manager-filters",
+    '{"year":"","tag":["Kept"]}');
+  adopting.context.fetch = async (url) => {
+    adopting.requests.push({ url });
+    return { ok: true, status: 200, json: async () => [] };
+  };
+  adopting.run("loadSavedFilters(); renderFilterOptions();");
+  await adopting.run("route()");
+  await new Promise(setImmediate);
+  assert.deepEqual(chipTexts(adopting), ["Kept"]);
+  assert.deepEqual(urlTags(adopting), ["Kept"]);
+
+  // Back/Forward: entering the overview again re-reads the tag parameters of
+  // the restored URL, so history navigation restores the selection.
+  const nav = setup(null, false, { url: "http://127.0.0.1:8000/?tag=One" });
+  nav.context.fetch = async (url) => {
+    nav.requests.push({ url });
+    return { ok: true, status: 200, json: async () => [] };
+  };
+  await nav.run("route()");
+  await new Promise(setImmediate);
+  assert.deepEqual(chipTexts(nav), ["One"]);
+  // Navigate to the data view and back: the selection survives.
+  await nav.run('navigate("data")');
+  await nav.run('navigate("browse")');
+  await new Promise(setImmediate);
+  assert.deepEqual(chipTexts(nav), ["One"]);
+  assert.deepEqual(urlTags(nav), ["One"]);
+  // Simulate Back to the data view and Forward to the overview.
+  await nav.context.window.history.go(-1);
+  await nav.context.window.history.go(1);
+  await new Promise(setImmediate);
+  assert.deepEqual(chipTexts(nav), ["One"]);
 }
 
 function makeItem(id, year) {
@@ -118,8 +303,7 @@ async function combinationTests() {
 
   get("sort-select").value = "updated";
   await get("sort-select").emit("change");
-  get("filter-tag").value = "Berlin";
-  await get("filter-tag").emit("change");
+  await selectTag(ui, "Berlin");
   get("search").value = "color";
   await run("loadList()");
   let url = requests.at(-1).url;
@@ -147,6 +331,14 @@ async function combinationTests() {
   assert.ok(url.includes("offset=0") && url.includes("sort=updated")
     && url.includes("tag=Berlin") && url.includes("year=1910"), url);
 
+  // Adding a second tag also returns to the first page, keeping everything.
+  await selectTag(ui, "Night");
+  url = requests.at(-1).url;
+  assert.ok(url.includes("offset=0") && url.includes("sort=updated")
+    && url.includes("year=1910"), url);
+  assert.deepEqual(new URLSearchParams(url.split("?")[1]).getAll("tag"),
+    ["Berlin", "Night"]);
+
   // Reset clears the filters but keeps the sort and returns to page one.
   await get("filter-reset").emit("click");
   url = requests.at(-1).url;
@@ -170,8 +362,7 @@ async function raceTests() {
   // request resolves last and must be dropped.
   get("sort-select").value = "year";
   await get("sort-select").emit("change");
-  get("filter-tag").value = "Berlin";
-  await get("filter-tag").emit("change");
+  await selectTag(ui, "Berlin");
   assert.equal(pending.length, 2);
   assert.ok(pending[0].url.includes("sort=year"), pending[0].url);
   assert.ok(pending[1].url.includes("sort=year")
@@ -222,9 +413,9 @@ async function runRaceTests() {
   };
 
   // A slower response for an old filter must not replace a newer filter's list.
-  run('currentFilters.tag = "Old town"');
+  run('currentFilters.tag = ["Old town"]');
   const oldLoad = run("loadList()");
-  run('currentFilters.tag = "New town"');
+  run('currentFilters.tag = ["New town"]');
   const newLoad = run("loadList()");
   assert.equal(pending.length, 2);
   pending[1].resolve(makeItems([7]));
@@ -237,7 +428,7 @@ async function runRaceTests() {
   // A stale append for an old filter must not extend the new filter's list.
   pending.length = 0;
   const staleAppend = run("loadList(true)");
-  run('currentFilters.tag = "Other town"');
+  run('currentFilters.tag = ["Other town"]');
   const freshLoad = run("loadList()");
   pending[1].resolve(makeItems([9]));
   await freshLoad;
@@ -273,19 +464,18 @@ async function runRaceTests() {
 
   // Stale filter values must not overwrite dropdowns a newer request rebuilt.
   pending.length = 0;
-  run('currentFilters = { year: "", tag: "" }');
+  run('currentFilters = { year: "", tag: [] }');
   const oldOptions = run("loadFilterOptions()");
   const newOptions = run("loadFilterOptions()");
   pending[1].resolve({ year: [], tag: ["Current"] });
   await newOptions;
   pending[0].resolve({ year: [], tag: ["Stale A", "Stale B"] });
   await oldOptions;
-  const options = get("filter-tag").children.map((option) => option.textContent);
-  assert.deepEqual(options.slice(1), ["Current"], "stale response rebuilt the dropdowns");
+  assert.deepEqual(tagChoices(ui), ["Current"], "stale response rebuilt the dropdowns");
 }
 
-// Every change to the collection must refresh the filter dropdowns, not only
-// the list: a value whose last postcard disappears is removed as an option.
+// Every change to the collection must refresh the filter choices, not only
+// the list: a value whose last postcard disappears is removed as a choice.
 async function refreshTests() {
   const ui = setup();
   const { run, get, context, requests, postcardForm, importForm } = ui;
@@ -315,8 +505,6 @@ async function refreshTests() {
       },
     };
   };
-  const tagOptions = () =>
-    get("filter-tag").children.map((option) => option.textContent).slice(1);
   const dialog = get("confirmation");
   const confirmPending = async (pending) => {
     dialog.returnValue = "confirm";
@@ -327,32 +515,32 @@ async function refreshTests() {
 
   await run('showView("browse")');
   await flush();
-  assert.deepEqual(tagOptions(), ["Berlin", "Munich"]);
+  assert.deepEqual(tagChoices(ui), ["Berlin", "Munich"]);
 
-  // Deleting directly in the overview reloads the dropdowns: the deleted
+  // Deleting directly in the overview reloads the choices: the deleted
   // postcard may have carried the last use of a value.
   requests.length = 0;
   await confirmPending(run("deletePostcard(1)"));
   assert.ok(requests.some((request) => request.url === "/api/postcards/filters"),
     "deleting in the overview must reload the filter options");
-  assert.deepEqual(tagOptions(), ["Munich"], "deleted value must leave the dropdown");
+  assert.deepEqual(tagChoices(ui), ["Munich"], "deleted value must leave the choices");
 
-  // A selected value whose last postcard is deleted stays selectable with an
-  // empty result (same rule as a restored value) instead of breaking the select.
+  // A selected tag whose last postcard is deleted stays selected as a chip
+  // (same rule as a restored value), showing an empty result until removed.
   options = { ...options, tag: ["Berlin", "Munich"] };
   await run('showView("browse")');
   await flush();
-  get("filter-tag").value = "Berlin";
-  await get("filter-tag").emit("change");
+  await selectTag(ui, "Berlin");
   await confirmPending(run("deletePostcard(1)"));
-  assert.equal(get("filter-tag").value, "Berlin", "selection must survive the refresh");
-  assert.deepEqual(tagOptions(), ["Berlin", "Munich"]);
+  assert.deepEqual(chipTexts(ui), ["Berlin"], "selection must survive the refresh");
+  assert.deepEqual(tagChoices(ui), ["Munich"],
+    "removed value no longer appears as a choice");
   assert.equal(get("filter-reset").hidden, false);
   assert.ok(requests.at(-1).url.includes("tag=Berlin"), requests.at(-1).url);
   await get("filter-reset").emit("click");
 
   // Deleting from the edit form returns to the overview, which reloads the
-  // dropdowns on entry.
+  // choices on entry.
   context.window.location.hash = `#postcards/${uuid}/edit`;
   await run("route()");
   await flush();
@@ -361,9 +549,9 @@ async function refreshTests() {
   await confirmPending(run("deletePostcard(2)"));
   assert.ok(requests.some((request) => request.url === "/api/postcards/filters"),
     "deleting from the edit form must reload the filter options");
-  assert.deepEqual(tagOptions(), ["Munich"]);
+  assert.deepEqual(tagChoices(ui), ["Munich"]);
 
-  // Saving returns to the overview, which reloads the dropdowns on entry.
+  // Saving returns to the overview, which reloads the choices on entry.
   options = { ...options, tag: ["Munich"] };
   await run('openForm()');
   postcardForm.elements.front_image_path.value = "/f.jpg";
@@ -372,9 +560,9 @@ async function refreshTests() {
   await flush();
   assert.ok(requests.some((request) => request.url === "/api/postcards/filters"),
     "saving must reload the filter options");
-  assert.deepEqual(tagOptions(), ["Munich", "Vienna"], "saved value must appear");
+  assert.deepEqual(tagChoices(ui), ["Munich", "Vienna"], "saved value must appear");
 
-  // After an import, returning to the overview reloads the dropdowns.
+  // After an import, returning to the overview reloads the choices.
   await run('navigate("data")');
   importForm.elements.file.files = [{ name: "import.json", text: async () => "[]" }];
   await importForm.emit("submit");
@@ -384,7 +572,7 @@ async function refreshTests() {
   await flush();
   assert.ok(requests.some((request) => request.url === "/api/postcards/filters"),
     "returning to the overview after an import must reload the filter options");
-  assert.ok(tagOptions().includes("Imported"), "imported value must appear");
+  assert.ok(tagChoices(ui).includes("Imported"), "imported value must appear");
 }
 
 runTests().catch((error) => {

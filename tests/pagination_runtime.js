@@ -46,10 +46,12 @@ async function runTests() {
   assert.equal(get("postcard-list").children.length, pageSize);
   assert.ok(requests.at(-1).url.includes("offset=0"));
 
-  // Search terms are forwarded with pagination.
+  // Search terms are forwarded with pagination (URLSearchParams encodes a
+  // space as "+").
   get("search").value = "Berlin platz";
   await run("loadList()");
-  assert.ok(requests.at(-1).url.includes("q=Berlin%20platz"), requests.at(-1).url);
+  assert.equal(new URLSearchParams(requests.at(-1).url.split("?")[1]).get("q"),
+    "Berlin platz", requests.at(-1).url);
 
   // An empty collection shows the hint and no button.
   get("search").value = "";

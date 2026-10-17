@@ -156,7 +156,7 @@ The form stores four canonical fields:
 |-------|-------------|-------------|
 | `front_image_path` | Required | Non-empty path or reference to the front image |
 | `back_image_path` | Optional | Path or reference to the back image |
-| `year` | Optional | Text, allowing approximate dates and ranges |
+| `year` | Optional | Exactly four ASCII digits (for example `1908`); legacy free-text values remain readable and restorable from full exports |
 | `description` | Optional | Free-form description |
 
 Image paths are internal state: the form fills them by uploading the selected

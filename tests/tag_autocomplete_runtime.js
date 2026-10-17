@@ -272,10 +272,13 @@ async function runTests() {
 // Touch-first browsers may blur the input on an option press despite the
 // pointerdown preventDefault; the following click must still accept the
 // option exactly once, keep focus in the input, and an ordinary outside blur
-// must keep closing the list.
+// must keep closing the list. Every non-accept terminal path (deferred close
+// timer, pointercancel, pointerleave, Escape/reset while pending) must
+// resolve the pending press so the list never stays logically open. The
+// harness provides deterministic fake timers (ui.timers/ui.runTimers).
 async function pointerSelectionTests() {
   const { ui, state } = makeUi(["Paris", "Prag"]);
-  const { run, get } = ui;
+  const { run, get, timers, runTimers } = ui;
   const input = get("tag-input");
   const list = get("tag-suggestions");
   const chips = () => get("tag-list").children.map((li) => li.children[0].textContent);
@@ -289,8 +292,9 @@ async function pointerSelectionTests() {
   await input.emit("input");
   assert.equal(list.hidden, false);
 
-  // Desktop path: pointerdown + mousedown both fire and prevent default; the
-  // input never blurs; one click accepts exactly once.
+  // (5) Desktop/mousedown-fallback path: pointerdown + mousedown both fire
+  // and prevent default; the input never blurs; one click accepts exactly
+  // once (the press handlers never accept themselves).
   let prevented = 0;
   const press = { preventDefault: () => { prevented += 1; } };
   await list.children[0].emit("pointerdown", press);
@@ -300,9 +304,11 @@ async function pointerSelectionTests() {
   assert.deepEqual(chips(), ["Paris"], "click after press must accept exactly once");
   assert.equal(input.focused, true);
   assert.equal(list.hidden, true);
+  assert.equal(timers.size, 0, "a focused accept must not leave a close timer");
 
-  // Touch path: the browser blurs the input between pointerdown and the tap's
-  // click. The deferred close keeps the option alive for that click.
+  // (2) Touch path: the browser blurs the input between pointerdown and the
+  // tap's click. The deferred close keeps the option alive; the click before
+  // the timer fires accepts exactly once, refocuses and cancels the timer.
   await input.emit("focus");
   input.value = "pr";
   await input.emit("input");
@@ -310,33 +316,116 @@ async function pointerSelectionTests() {
   await list.children[0].emit("pointerdown", { preventDefault() {} });
   await input.emit("blur");
   assert.equal(list.hidden, false, "press-caused blur must not close the list yet");
+  assert.equal(timers.size, 1, "a press-caused blur must schedule the deferred close");
   await list.children[0].emit("click");
   assert.deepEqual(chips(), ["Paris", "Prag"], "tap must accept exactly once");
   assert.equal(input.focused, true, "accepting must refocus the input");
   assert.equal(list.hidden, true);
+  assert.equal(timers.size, 0, "accepting must cancel the deferred close timer");
+  runTimers(); // No stray timer may mutate anything after the accept.
+  assert.deepEqual(chips(), ["Paris", "Prag"]);
 
-  // A cancelled press (finger dragged away) after a blur closes the list.
+  // (1) Orphaned press: pointerdown -> blur with neither click nor cancel.
+  // The deferred close fires and fully closes the list (hidden,
+  // aria-expanded=false, no aria-activedescendant), with no acceptance.
   state.tags = ["Paris", "Prag", "Pavia"];
   await run("loadFilterOptions()");
   await flush();
   await input.emit("focus");
   input.value = "pav";
   await input.emit("input");
+  await input.emit("keydown", { key: "ArrowDown", preventDefault() {} });
+  assert.equal(input.attributes["aria-activedescendant"], "tag-option-0");
+  await list.children[0].emit("pointerdown", { preventDefault() {} });
+  await input.emit("blur");
+  assert.equal(list.hidden, false, "the list survives until the deferred close");
+  runTimers();
+  assert.equal(list.hidden, true, "an orphaned press must eventually close the list");
+  assert.equal(input.attributes["aria-expanded"], "false");
+  assert.equal("aria-activedescendant" in input.attributes, false,
+    "closing must clear aria-activedescendant");
+  assert.deepEqual(chips(), ["Paris", "Prag"], "an orphaned press must not accept");
+  assert.equal(timers.size, 0);
+  // The pending state is fully resolved: a later outside blur closes
+  // immediately again (no deferral from stale pending state).
+  await input.emit("focus");
+  input.value = "pav";
+  await input.emit("input");
   assert.equal(list.hidden, false);
+  await input.emit("blur");
+  assert.equal(list.hidden, true, "pending state must not leak into later blurs");
+  assert.equal(timers.size, 0);
+
+  // (3) A cancelled press (pointercancel) after a blur closes immediately
+  // and never accepts; the deferred timer is cleaned up.
+  await input.emit("focus");
+  input.value = "pav";
+  await input.emit("input");
   const option = list.children[0];
   await option.emit("pointerdown", { preventDefault() {} });
   await input.emit("blur");
   await option.emit("pointercancel");
   assert.equal(list.hidden, true, "cancelled press after blur must close the list");
   assert.deepEqual(chips(), ["Paris", "Prag"], "a cancelled press must not accept");
+  assert.equal(timers.size, 0, "pointercancel must clear the deferred close timer");
 
-  // An ordinary outside blur (no pending press) still closes the list.
+  // (3) pointerleave (pointer dragged off the option before release) is an
+  // equivalent abandon path.
   await input.emit("focus");
   input.value = "pav";
+  await input.emit("input");
+  const leaveOption = list.children[0];
+  await leaveOption.emit("pointerdown", { preventDefault() {} });
+  await input.emit("blur");
+  await leaveOption.emit("pointerleave");
+  assert.equal(list.hidden, true, "pointerleave after blur must close the list");
+  assert.deepEqual(chips(), ["Paris", "Prag"], "pointerleave must not accept");
+  assert.equal(timers.size, 0);
+  // While the input stays focused, pointerleave only abandons the press and
+  // keeps the list open for keyboard use.
+  await input.emit("focus");
+  input.value = "pav";
+  await input.emit("input");
+  await list.children[0].emit("pointerdown", { preventDefault() {} });
+  await list.children[0].emit("pointerleave");
+  assert.equal(list.hidden, false, "a focused abandoned press keeps the list open");
+
+  // (4) Escape while a press is pending (after blur) closes at once, cancels
+  // the timer, and the later timer run must not reopen or mutate anything.
+  await list.children[0].emit("pointerdown", { preventDefault() {} });
+  await input.emit("blur");
+  assert.equal(timers.size, 1);
+  await input.emit("focus"); // focus returns (e.g. Escape routing refocuses)
+  assert.equal(timers.size, 0, "refocusing must cancel the deferred close");
+  await input.emit("keydown", { key: "Escape", preventDefault() {} });
+  assert.equal(list.hidden, true);
+  runTimers();
+  assert.equal(list.hidden, true, "no stale timer may reopen the list");
+
+  // (4) Form reset (openForm) while a press is pending: closeSuggestions
+  // clears pending state and timer; the timer run must not touch the new form.
+  await input.emit("focus");
+  input.value = "pav";
+  await input.emit("input");
+  await list.children[0].emit("pointerdown", { preventDefault() {} });
+  await input.emit("blur");
+  assert.equal(timers.size, 1);
+  await run("openForm()");
+  assert.equal(list.hidden, true);
+  assert.equal(timers.size, 0, "reset must clear the pending close timer");
+  runTimers();
+  assert.equal(list.hidden, true, "no timer may mutate the reset form");
+  assert.deepEqual(chips(), [], "the new form must stay empty");
+
+  // An ordinary outside blur (no pending press) still closes the list
+  // immediately, without scheduling a timer.
+  await input.emit("focus");
+  input.value = "pa";
   await input.emit("input");
   assert.equal(list.hidden, false);
   await input.emit("blur");
   assert.equal(list.hidden, true, "outside blur must close the list");
+  assert.equal(timers.size, 0, "outside blur must not schedule a timer");
 }
 
 // Composed/decomposed Unicode must match in both directions (NFC before the

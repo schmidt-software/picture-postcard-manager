@@ -20,11 +20,17 @@ let suggestions = [];
 let activeIndex = -1;
 let inputFocused = false;
 let composing = false;
-// True while a pointer press on an option is in flight (pointerdown/mousedown
-// seen, click not yet dispatched). Some touch-first browsers blur the input
-// despite the preventDefault; the blur handler then defers the close so the
-// following click/tap can still accept the option exactly once.
+// Pointer-press state machine for option selection. A press (pointerdown or
+// the mousedown fallback) on an option sets `pointerSelectionPending`; some
+// touch-first browsers still blur the input despite the preventDefault, so
+// the blur then only schedules a short deferred close (`pendingCloseTimer`)
+// instead of destroying the list before the tap's click can accept. Every
+// terminal path resolves the pending state: click accepts (closeSuggestions
+// clears flag and timer), pointercancel/pointerleave abandon the press, the
+// deferred timer closes an orphaned press, and refocusing the input or any
+// close (Escape, reset, navigation, openForm) cancels both.
 let pointerSelectionPending = false;
+let pendingCloseTimer = null;
 let announcedCount = -1;
 
 export function getTags() {
@@ -132,12 +138,11 @@ function renderSuggestions() {
     };
     li.addEventListener("pointerdown", keepFocus);
     li.addEventListener("mousedown", keepFocus);
-    // A cancelled press (e.g. the finger drags away) ends the pending
-    // selection; if the input was already blurred, close the list now.
-    li.addEventListener("pointercancel", () => {
-      pointerSelectionPending = false;
-      if (!inputFocused) closeSuggestions();
-    });
+    // An abandoned press (cancelled gesture, or the pointer leaving the
+    // option before release) never accepts: resolve the pending state and,
+    // if the input was already blurred, close the list now.
+    li.addEventListener("pointercancel", abandonPointerSelection);
+    li.addEventListener("pointerleave", abandonPointerSelection);
     li.addEventListener("click", () => acceptSuggestion(tag));
     return li;
   }));
@@ -172,9 +177,24 @@ function updateSuggestions(keepActive = false) {
 }
 
 function closeSuggestions() {
+  // Closing resolves any in-flight pointer press: no timer may later mutate
+  // a reset or reopened form, and no stale reopen can happen.
+  pointerSelectionPending = false;
+  if (pendingCloseTimer !== null) {
+    clearTimeout(pendingCloseTimer);
+    pendingCloseTimer = null;
+  }
   suggestions = [];
   activeIndex = -1;
   renderSuggestions();
+}
+
+// Terminal for a press that will not produce a click: resolve the pending
+// state and close the list when focus already left the input.
+function abandonPointerSelection() {
+  if (!pointerSelectionPending) return;
+  pointerSelectionPending = false;
+  if (!inputFocused) closeSuggestions();
 }
 
 function moveActive(delta) {
@@ -185,7 +205,7 @@ function moveActive(delta) {
 }
 
 function acceptSuggestion(tag) {
-  pointerSelectionPending = false;
+  // closeSuggestions below resolves the pending press state and its timer.
   if (typeof tag !== "string" || !tag) return;
   if (!currentTags.includes(tag)) currentTags = [...currentTags, tag];
   const input = $("#tag-input");
@@ -205,16 +225,33 @@ export function initTags() {
   input.addEventListener("input", () => updateSuggestions());
   input.addEventListener("focus", () => {
     inputFocused = true;
+    // Focus returning (e.g. after an accepted option) resolves any pending
+    // press and cancels the deferred close so the list state is rebuilt from
+    // the current input only.
     pointerSelectionPending = false;
+    if (pendingCloseTimer !== null) {
+      clearTimeout(pendingCloseTimer);
+      pendingCloseTimer = null;
+    }
     updateSuggestions();
   });
   input.addEventListener("blur", () => {
     inputFocused = false;
     // A blur caused by pressing an option must not destroy the list before
-    // the click/tap accepts it (the click handler closes it, pointercancel
-    // cleans up an abandoned press). Any other blur closes the list.
+    // the tap's click can accept it. The press stays pending (so a
+    // pointercancel/pointerleave can still resolve it) and a short deferred
+    // close guarantees the list never stays logically open
+    // (aria-expanded="true") when no click or cancel ever arrives; a click
+    // accepts first and cancels the timer via closeSuggestions. Any blur
+    // without a pending press closes the list immediately.
     if (pointerSelectionPending) {
-      pointerSelectionPending = false;
+      if (pendingCloseTimer === null) {
+        pendingCloseTimer = setTimeout(() => {
+          pendingCloseTimer = null;
+          pointerSelectionPending = false;
+          if (!inputFocused) closeSuggestions();
+        }, 250);
+      }
       return;
     }
     closeSuggestions();

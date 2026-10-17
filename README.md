@@ -731,6 +731,22 @@ replacing `build: .` with
 `compose.yaml`; everything else (volume, healthcheck, port mapping) stays the
 same.
 
+## Release announcements (Mastodon)
+
+Every published **stable** GitHub Release is automatically announced on the
+Mastodon instance <https://kanoa.de>
+(workflow: `.github/workflows/announce-release.yml`). The status contains the
+release name, tag, a truncated excerpt of the release notes and a link to the
+release page. Drafts and pre-releases are never announced, matching the
+container-image convention above where pre-releases are previews that never
+become `latest`.
+
+The workflow authenticates with the `MASTODON_ACCESS_TOKEN` repository
+secret: a Mastodon access token for the announcing account on `kanoa.de`
+with the `write:statuses` scope (create it under *Preferences → Development →
+New application*). Without the secret the workflow fails without posting
+anything; the token value itself is never logged.
+
 ## Configuration
 
 | Variable      | Default              | Description              |

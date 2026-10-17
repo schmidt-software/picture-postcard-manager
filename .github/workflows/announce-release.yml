@@ -1,0 +1,192 @@
+# Announce every published, stable GitHub Release on the Mastodon instance
+# https://kanoa.de.
+#
+# Security (same discipline as release-image.yml):
+#   - Triggered only by `release: published` (drafts never fire `published`;
+#     an explicit guard below documents and enforces this anyway).
+#   - Pre-releases are previews (README "Container images": they never get
+#     the `latest` tag) and are therefore not announced publicly.
+#   - The workflow token gets no repository permissions at all; the job only
+#     talks to the Mastodon API with the MASTODON_ACCESS_TOKEN secret.
+#   - Release metadata (tag, name, notes, URL) is attacker-influenced text.
+#     It is passed exclusively via `env:` into a Python script and never
+#     interpolated into shell commands.
+#   - The token is read from the environment inside Python and sent only as
+#     an Authorization header; it is never echoed, written to disk or logged.
+#
+# The embedded Python script is import-safe (guarded by __name__) so the
+# status-building logic is unit-tested in tests/test_announce_release.py.
+
+name: Announce release
+
+on:
+  release:
+    types: [published]
+
+# One announcement run per release tag; a re-published release waits for a
+# still-running announcement of the same tag instead of racing it. The
+# Idempotency-Key header below additionally keeps Mastodon from creating a
+# duplicate status if the same release is ever re-published.
+concurrency:
+  group: announce-release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+# The job needs no access to repository contents, packages or anything else.
+permissions: {}
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    # Belt and braces: `published` already excludes drafts, but never
+    # announce a draft even if trigger semantics change. Pre-releases are
+    # deliberately excluded (see header comment).
+    if: ${{ !github.event.release.draft && !github.event.release.prerelease }}
+    steps:
+      - name: Post announcement to Mastodon
+        env:
+          MASTODON_ACCESS_TOKEN: ${{ secrets.MASTODON_ACCESS_TOKEN }}
+          MASTODON_SERVER: https://kanoa.de
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          RELEASE_NOTES: ${{ github.event.release.body }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          import urllib.error
+          import urllib.request
+
+          # Mastodon's default status limit. Every URL counts as exactly 23
+          # characters toward the limit, regardless of its real length.
+          STATUS_LIMIT = 500
+          URL_WEIGHT = 23
+          ELLIPSIS = "\u2026"
+
+          # Matches what Mastodon treats as a link for length accounting.
+          # Trailing punctuation is not part of the link (Mastodon excludes
+          # it too) and must be counted as ordinary text.
+          URL_RE = re.compile(r"https?://\S+")
+          TRAILING_PUNCT = ".,!?:;)]}'\""
+
+          def effective_length(text):
+              """Length as Mastodon counts it: each URL weighs 23 chars."""
+              length = 0
+              last = 0
+              for match in URL_RE.finditer(text):
+                  url = match.group(0)
+                  trailing = len(url) - len(url.rstrip(TRAILING_PUNCT))
+                  length += (match.start() - last) + URL_WEIGHT + trailing
+                  last = match.end()
+              return length + (len(text) - last)
+
+          def truncate_to(text, limit):
+              """Deterministically shorten text to an effective length of at
+              most `limit`, appending an ellipsis when anything was cut.
+
+              Re-measures after every removed character, so cutting into the
+              middle of a URL (which changes how the remainder is weighted)
+              can never push the result back over the limit.
+              """
+              if effective_length(text) <= limit:
+                  return text
+              if limit < 1:
+                  return ""
+              while text and effective_length(text.rstrip() + ELLIPSIS) > limit:
+                  text = text[:-1]
+              return text.rstrip() + ELLIPSIS if text else ELLIPSIS[:limit]
+
+          def build_status(tag, name, url, notes):
+              """Compose the announcement; always <= STATUS_LIMIT effective
+              characters, keeping the release URL intact whenever present."""
+              tag = tag.strip()
+              name = name.strip()
+              url = url.strip()
+              notes = notes.strip()
+
+              if name and tag and tag not in name:
+                  headline = (
+                      f"Picture Postcard Manager {name} ({tag}) released"
+                  )
+              else:
+                  headline = (
+                      f"Picture Postcard Manager {name or tag} released"
+                  )
+
+              # Reserve room for "\n\n" + the weighted URL before anything
+              # else, so the release link always survives.
+              reserved = (URL_WEIGHT + 2) if url else 0
+              headline = truncate_to(headline, STATUS_LIMIT - reserved)
+
+              parts = [headline]
+              budget = STATUS_LIMIT - effective_length(headline) - reserved
+              # Notes need "\n\n" (2) plus enough room to be worth showing.
+              if notes and budget > 22:
+                  parts.append(truncate_to(notes, budget - 2))
+              if url:
+                  parts.append(url)
+
+              status = "\n\n".join(parts)
+              # Final guard: whatever happened above, never exceed the limit.
+              if effective_length(status) > STATUS_LIMIT:
+                  status = truncate_to(status, STATUS_LIMIT)
+              return status
+
+          def main():
+              token = os.environ.get("MASTODON_ACCESS_TOKEN", "").strip()
+              if not token:
+                  sys.exit(
+                      "The MASTODON_ACCESS_TOKEN repository secret is not "
+                      "configured; refusing to run."
+                  )
+
+              server = os.environ["MASTODON_SERVER"].rstrip("/")
+              tag = os.environ.get("RELEASE_TAG", "")
+
+              status = build_status(
+                  tag,
+                  os.environ.get("RELEASE_NAME", ""),
+                  os.environ.get("RELEASE_URL", ""),
+                  os.environ.get("RELEASE_NOTES", ""),
+              )
+
+              payload = json.dumps(
+                  {"status": status, "visibility": "public", "language": "en"}
+              ).encode("utf-8")
+              request = urllib.request.Request(
+                  server + "/api/v1/statuses",
+                  data=payload,
+                  headers={
+                      "Authorization": "Bearer " + token,
+                      "Content-Type": "application/json",
+                      # Re-running or re-publishing the same release must
+                      # not create a duplicate status.
+                      "Idempotency-Key": "release-"
+                      + os.environ.get("REPOSITORY", "")
+                      + "-"
+                      + tag.strip(),
+                  },
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      result = json.load(response)
+              except urllib.error.HTTPError as error:
+                  # Never dump the response body wholesale; it is enough to
+                  # know the status code, and the body could be misleading.
+                  sys.exit(f"Mastodon API returned HTTP {error.code}.")
+              except urllib.error.URLError as error:
+                  sys.exit(
+                      f"Could not reach the Mastodon server: {error.reason}"
+                  )
+
+              print(
+                  "Announced release on Mastodon:",
+                  result.get("url", "(no URL)"),
+              )
+
+          if __name__ == "__main__":
+              main()
+          PY

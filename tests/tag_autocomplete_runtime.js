@@ -8,13 +8,19 @@ const assert = require("node:assert/strict");
 const { setup } = require("./i18n_runtime.js");
 
 function makeUi(tags) {
-  const state = { tags: [...tags], failFilters: false, pending: null };
+  const state = { tags: [...tags], failFilters: false, failImport: false, pending: null };
   const ui = setup(null, false, {
-    fetch: async (url) => {
+    fetch: async (url, opts) => {
       if (url === "/api/postcards/filters") {
         if (state.pending) return state.pending;
         if (state.failFilters) throw new Error("network down");
         return { ok: true, status: 200, json: async () => ({ year: [], tag: [...state.tags] }) };
+      }
+      if (url.startsWith("/api/import")) {
+        if (state.failImport) {
+          return { ok: false, status: 400, json: async () => ({ error: "unsupported import format" }) };
+        }
+        return { ok: true, status: 200, json: async () => ({ imported: 1 }) };
       }
       return { ok: true, status: 200, json: async () => [] };
     },
@@ -256,7 +262,182 @@ async function runTests() {
   assert.deepEqual(fresh.get("tag-list").children.map((li) => li.children[0].textContent),
     ["still works"]);
 
+  await pointerSelectionTests();
+  await unicodeNormalizationTests();
+  await importRefreshTests();
+
   console.log("Tag autocomplete runtime checks passed.");
+}
+
+// Touch-first browsers may blur the input on an option press despite the
+// pointerdown preventDefault; the following click must still accept the
+// option exactly once, keep focus in the input, and an ordinary outside blur
+// must keep closing the list.
+async function pointerSelectionTests() {
+  const { ui, state } = makeUi(["Paris", "Prag"]);
+  const { run, get } = ui;
+  const input = get("tag-input");
+  const list = get("tag-suggestions");
+  const chips = () => get("tag-list").children.map((li) => li.children[0].textContent);
+  const flush = () => new Promise(setImmediate);
+  await flush();
+  await run("loadFilterOptions()");
+  await flush();
+  await run("openForm()");
+  await input.emit("focus");
+  input.value = "pa";
+  await input.emit("input");
+  assert.equal(list.hidden, false);
+
+  // Desktop path: pointerdown + mousedown both fire and prevent default; the
+  // input never blurs; one click accepts exactly once.
+  let prevented = 0;
+  const press = { preventDefault: () => { prevented += 1; } };
+  await list.children[0].emit("pointerdown", press);
+  await list.children[0].emit("mousedown", press);
+  assert.equal(prevented, 2, "both press events must prevent the focus steal");
+  await list.children[0].emit("click");
+  assert.deepEqual(chips(), ["Paris"], "click after press must accept exactly once");
+  assert.equal(input.focused, true);
+  assert.equal(list.hidden, true);
+
+  // Touch path: the browser blurs the input between pointerdown and the tap's
+  // click. The deferred close keeps the option alive for that click.
+  await input.emit("focus");
+  input.value = "pr";
+  await input.emit("input");
+  assert.equal(list.hidden, false);
+  await list.children[0].emit("pointerdown", { preventDefault() {} });
+  await input.emit("blur");
+  assert.equal(list.hidden, false, "press-caused blur must not close the list yet");
+  await list.children[0].emit("click");
+  assert.deepEqual(chips(), ["Paris", "Prag"], "tap must accept exactly once");
+  assert.equal(input.focused, true, "accepting must refocus the input");
+  assert.equal(list.hidden, true);
+
+  // A cancelled press (finger dragged away) after a blur closes the list.
+  state.tags = ["Paris", "Prag", "Pavia"];
+  await run("loadFilterOptions()");
+  await flush();
+  await input.emit("focus");
+  input.value = "pav";
+  await input.emit("input");
+  assert.equal(list.hidden, false);
+  const option = list.children[0];
+  await option.emit("pointerdown", { preventDefault() {} });
+  await input.emit("blur");
+  await option.emit("pointercancel");
+  assert.equal(list.hidden, true, "cancelled press after blur must close the list");
+  assert.deepEqual(chips(), ["Paris", "Prag"], "a cancelled press must not accept");
+
+  // An ordinary outside blur (no pending press) still closes the list.
+  await input.emit("focus");
+  input.value = "pav";
+  await input.emit("input");
+  assert.equal(list.hidden, false);
+  await input.emit("blur");
+  assert.equal(list.hidden, true, "outside blur must close the list");
+}
+
+// Composed/decomposed Unicode must match in both directions (NFC before the
+// locale case fold); the fold is toLocaleLowerCase, not full Unicode case
+// folding (so "ss" never matches "ß"). Stored spellings are preserved and
+// NFC-equivalent duplicates with different code sequences stay distinct
+// stored tags with deterministic order.
+async function unicodeNormalizationTests() {
+  const composed = "Caf\u00e9"; // Café (U+00E9)
+  const decomposed = "Cafe\u0301 au lait"; // e + combining acute
+  const known = [composed, decomposed, "Stra\u00dfe", "STRA\u1e9eE", "\u0130stanbul", "Istanbul", "izmir"];
+  const { ui } = makeUi(known);
+  const { run, get } = ui;
+  const input = get("tag-input");
+  const list = get("tag-suggestions");
+  const options = () => list.children.map((li) => li.textContent);
+  const type = async (value) => {
+    input.value = value;
+    await input.emit("input");
+  };
+  await new Promise(setImmediate);
+  await run("loadFilterOptions()");
+  await new Promise(setImmediate);
+  await run("openForm()");
+  await input.emit("focus");
+
+  // Composed prefix matches both stored forms; spellings stay as stored.
+  await type("caf\u00e9");
+  assert.deepEqual(options(), [composed, decomposed]);
+  // Decomposed prefix matches both directions too.
+  await type("cafe\u0301");
+  assert.deepEqual(options(), [composed, decomposed]);
+
+  // German sharp s: the capital ẞ folds to ß, so ß prefixes match both...
+  await type("stra\u00df");
+  assert.deepEqual(options(), ["Stra\u00dfe", "STRA\u1e9eE"]);
+  // ...but "ss" does not (locale lowercase fold, not full Unicode casefold).
+  await type("strass");
+  assert.equal(list.hidden, true);
+
+  // Under the shipped EN and DE locales a plain "i" matches I, İ and i
+  // (İ lowercases to i + combining dot); Turkish dotless-I rules would only
+  // apply under a "tr" locale, which the UI does not ship.
+  for (const language of ["en", "de"]) {
+    run(`applyLanguage(${JSON.stringify(language)})`);
+    await type("i");
+    assert.deepEqual(options(), ["izmir", "Istanbul", "\u0130stanbul"],
+      `locale ${language}: I/\u0130/i must all match a plain i prefix`);
+  }
+}
+
+// A successful JSON import refreshes the shared filter-values cache exactly
+// once, so the autocomplete knows newly imported tags immediately — even when
+// the form is opened without revisiting the overview. A failed import leaves
+// the cache untouched.
+async function importRefreshTests() {
+  const { ui, state } = makeUi(["Old"]);
+  const { run, get, importForm, requests } = ui;
+  const input = get("tag-input");
+  const list = get("tag-suggestions");
+  const options = () => list.children.map((li) => li.textContent);
+  const flush = () => new Promise(setImmediate);
+  const filterRequests = () =>
+    requests.filter((request) => request.url === "/api/postcards/filters").length;
+  await flush();
+  await run("loadFilterOptions()");
+  await flush();
+
+  // Success: exactly one shared refresh, no duplicate requests.
+  state.tags = ["Old", "Imported City"];
+  importForm.elements.file.files = [{ name: "import.json", text: async () => "{}" }];
+  requests.length = 0;
+  await importForm.emit("submit");
+  await flush();
+  assert.equal(filterRequests(), 1,
+    "a successful import must refresh the filter values exactly once");
+  assert.equal(get("message").textContent, run('translate("imported", { count: 1 })'),
+    "the import success message must be preserved");
+
+  // The new tag is suggestible immediately, without visiting the overview.
+  await run("openForm()");
+  await input.emit("focus");
+  input.value = "imp";
+  await input.emit("input");
+  assert.deepEqual(options(), ["Imported City"],
+    "imported tags must be available to the autocomplete immediately");
+
+  // Failure: no refresh, cache and suggestions unchanged, error shown.
+  state.failImport = true;
+  state.tags = ["Old", "Imported City", "Never Loaded"];
+  importForm.elements.file.files = [{ name: "bad.json", text: async () => "{}" }];
+  requests.length = 0;
+  await importForm.emit("submit");
+  await flush();
+  assert.equal(filterRequests(), 0, "a failed import must not refresh the filter values");
+  input.value = "nev";
+  await input.emit("input");
+  assert.equal(list.hidden, true, "a failed import must not overwrite the cached tags");
+  input.value = "imp";
+  await input.emit("input");
+  assert.deepEqual(options(), ["Imported City"], "the previous cache must survive a failed import");
 }
 
 runTests().catch((error) => {

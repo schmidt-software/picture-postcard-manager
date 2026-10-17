@@ -58,13 +58,18 @@ export function renderList() {
     const tr = document.createElement("tr");
     const idCell = document.createElement("td");
     idCell.textContent = p.id;
+    idCell.dataset.label = translate("id");
     tr.append(idCell);
-    tr.append(imagePreview(p.front_image_path, "frontImage"),
-      imagePreview(p.back_image_path, "backImage"));
+    const frontCell = imagePreview(p.front_image_path, "frontImage");
+    frontCell.dataset.label = translate("frontImage");
+    const backCell = imagePreview(p.back_image_path, "backImage");
+    backCell.dataset.label = translate("backImage");
+    tr.append(frontCell, backCell);
     for (const field of ["year"]) {
       const td = document.createElement("td");
       td.className = "postcard-value";
       td.textContent = p[field] ?? "";
+      td.dataset.label = translate(field);
       tr.append(td);
     }
     const tagsCell = document.createElement("td");
@@ -77,9 +82,11 @@ export function renderList() {
       return li;
     }));
     tagsCell.append(tagList);
+    tagsCell.dataset.label = translate("tags");
     tr.append(tagsCell);
     const updatedCell = document.createElement("td");
     updatedCell.textContent = p.updated_at;
+    updatedCell.dataset.label = translate("updated");
     tr.append(updatedCell);
     const actionCell = document.createElement("td");
     const actions = document.createElement("div");
@@ -105,6 +112,7 @@ export function renderList() {
       actions.append(button);
     }
     actionCell.append(actions);
+    actionCell.dataset.label = translate("rowActions");
     tr.append(actionCell);
     tr.tabIndex = 0;
     tr.setAttribute("aria-label", translate("viewPostcard", { id: p.id }));

@@ -4,19 +4,19 @@
   font-family: system-ui, sans-serif;
 }
 
-body { margin: 0; color: #1f2328; }
+body { margin: 0; color: #1f2328; overflow-x: hidden; }
 header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
-         gap: 1rem; padding: 0.75rem 1.5rem; border-bottom: 1px solid var(--border); }
+         gap: 1rem; padding: 0.75rem max(1rem, env(safe-area-inset-right)) 0.75rem max(1rem, env(safe-area-inset-left)); border-bottom: 1px solid var(--border); }
 header h1 { font-size: 1.25rem; margin: 0; }
-nav { display: flex; gap: 0.5rem; }
-main { padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
+nav { display: flex; flex-wrap: wrap; gap: 0.5rem; min-width: 0; }
+main { padding: 1rem max(1rem, env(safe-area-inset-right)) 1rem max(1rem, env(safe-area-inset-left)); max-width: 1100px; margin: 0 auto; box-sizing: border-box; }
 
-button { padding: 0.4rem 0.9rem; border: 1px solid var(--border); border-radius: 6px;
+button { min-height: 44px; padding: 0.4rem 0.9rem; border: 1px solid var(--border); border-radius: 6px;
          background: #f6f8fa; cursor: pointer; }
 button.active, button[type="submit"] { background: var(--accent); color: #fff; border-color: var(--accent); }
 button.danger { background: #cf222e; color: #fff; border-color: #cf222e; }
 
-input, textarea, select { font: inherit; padding: 0.4rem; border: 1px solid var(--border); border-radius: 6px; }
+input, textarea, select { font: inherit; font-size: max(1rem, 16px); min-height: 44px; box-sizing: border-box; padding: 0.4rem; border: 1px solid var(--border); border-radius: 6px; }
 input[type="search"] { width: 100%; box-sizing: border-box; margin-bottom: 1rem; }
 .sort-controls { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
 .filter-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 0.75rem; margin-bottom: 1rem; }
@@ -37,6 +37,7 @@ input[type="search"] { width: 100%; box-sizing: border-box; margin-bottom: 1rem;
   .filter-tag-controls select { flex: 1 1 100%; }
 }
 
+form :is(input, textarea, select, button):focus { scroll-margin-block: 6rem; }
 form { display: flex; flex-direction: column; gap: 0.75rem; max-width: 600px; }
 label { display: flex; flex-direction: column; gap: 0.25rem; }
 #import-form label { flex-direction: row; align-items: center; }
@@ -148,14 +149,14 @@ tbody tr:hover { background: #f6f8fa; }
 .tag { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.1rem 0.2rem 0.1rem 0.6rem;
        border: 1px solid var(--border); border-radius: 999px; background: #eef4fb;
        overflow-wrap: anywhere; }
-.tag button { padding: 0 0.4rem; border: 0; border-radius: 999px; background: transparent; }
+.tag button { min-height: 44px; padding: 0 0.4rem; border: 0; border-radius: 999px; background: transparent; }
 .postcard-tags .tag { padding-right: 0.6rem; }
 
-#message { position: fixed; bottom: 1rem; right: 1rem; padding: 0.75rem 1rem; border-radius: 6px;
+#message { position: fixed; bottom: max(1rem, env(safe-area-inset-bottom)); right: max(1rem, env(safe-area-inset-right)); left: max(1rem, env(safe-area-inset-left)); max-width: 32rem; margin-left: auto; padding: 0.75rem 1rem; border-radius: 6px;
            background: #1a7f37; color: #fff; }
 #message.error { background: #cf222e; }
 
-footer { padding: 0.75rem 1.5rem; border-top: 1px solid var(--border); }
+footer { padding: 0.75rem max(1rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); border-top: 1px solid var(--border); }
 footer p { margin: 0; font-size: 0.85rem; color: #59636e; overflow-wrap: anywhere; }
 @media (max-width: 480px) {
   footer { padding: 0.75rem 1rem; }
@@ -164,4 +165,41 @@ footer p { margin: 0; font-size: 0.85rem; color: #59636e; overflow-wrap: anywher
    footer text so it stays readable instead of keeping the muted gray. */
 @media (forced-colors: active) {
   footer p { color: CanvasText; }
+}
+
+/* Mobile-first postcard cards: retain table semantics while presenting each
+   row without horizontal scrolling at phone widths. */
+@media (max-width: 700px) {
+  header { align-items: stretch; }
+  header h1, header nav, .language-picker { flex: 1 1 100%; }
+  header nav button { flex: 1 1 8rem; }
+  .language-picker select { flex: 1; min-width: 0; }
+  .sort-controls, .filter-controls, .tag-add, .actions { align-items: stretch; flex-wrap: wrap; }
+  .sort-controls > *, .filter-controls > *, .tag-add > *, .actions > * { min-width: 0; }
+  .sort-controls label, .sort-controls select, .sort-controls button,
+  .filter-controls > label, .filter-controls > button { flex: 1 1 100%; }
+  .image-picker { max-width: 100%; }
+  .table-wrap { overflow-x: visible; }
+  table, tbody { display: block; width: 100%; }
+  thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  tbody tr { display: block; margin-bottom: 1rem; border: 1px solid var(--border);
+             border-radius: 10px; padding: 0.5rem; background: #fff; }
+  tbody td { display: grid; grid-template-columns: minmax(7rem, 35%) minmax(0, 1fr);
+             gap: 0.75rem; align-items: start; border-bottom: 1px solid var(--border);
+             padding: 0.65rem 0.25rem; min-width: 0; overflow-wrap: anywhere; }
+  tbody td:last-child { border-bottom: 0; }
+  tbody td::before { content: attr(data-label); font-weight: 600; }
+  .row-actions { flex-wrap: wrap; }
+  .postcard-thumbnail { max-width: 100%; height: auto; aspect-ratio: 3 / 2; }
+  .detail-heading .actions, .share-controls { width: 100%; }
+  .detail-heading .actions button, .share-controls button { flex: 1 1 10rem; }
+}
+@media (max-width: 360px) {
+  tbody td { grid-template-columns: 1fr; gap: 0.25rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+@media (forced-colors: active) {
+  tbody tr { border-color: CanvasText; }
 }

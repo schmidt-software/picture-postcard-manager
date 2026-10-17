@@ -231,36 +231,33 @@ in this browser only.
 ### Create a postcard
 
 1. Choose **New postcard**.
-2. Add the front image. The front image is required.
-3. Optionally add the back image, year, description, and tags.
-4. Choose **Save**.
+2. Choose the **Front image** preview. An empty preview says **No image selected. Opens the file picker.** Click, tap, or press Enter or Space. The accessible name is **Choose front image**.
+3. The selected file is shown at once. Nothing is uploaded until you choose **Save**.
+4. Optionally choose the **Back image** preview the same way. The back image is optional.
+5. Optionally add the year, description, and tags.
+6. Choose **Save**.
 
-The page confirms **Postcard saved.** and returns to Browse.
+The page says **Uploading image…** and then **Image uploaded.** while it stores the selected files. It then confirms **Postcard saved.** and returns to Browse.
 
 | Field | Required | What to enter |
 | --- | --- | --- |
-| **Front image path** | Yes | Filled by **Choose front image**, or typed as a path the application can store |
-| **Back image path** | No | Filled by **Choose back image**, or left empty |
+| **Front image** | Yes | A PNG, JPEG, GIF, or WebP file, up to 20 MiB |
+| **Back image** | No | The same kinds of file, or none |
 | **Year** | No | Free text, such as `1905`, `ca. 1910`, or `1910-1915` |
 | **Description** | No | Any notes about the postcard |
 | **Tags** | No | Location and other labels; see [Tags and search](#tags-and-search) |
 
-**Save** stays unavailable while an upload is still running. If you choose
-**Save** too early, the page says **Please wait until the image upload has
-finished.** If the front path is blank, the page says **Please enter the front
-image path.**
+There is no visible path field. The application stores an uploaded file under a generated name. The file name on your computer is not stored.
+
+To clear a selection before saving, choose the trash control. Its accessible name is **Remove front image** or **Remove back image**. The page says **Image removed.** Clearing a selection does not delete a file that was already stored. The association changes only if you then save, and the old file remains until cleanup.
+
+If no front image is selected, the page says **Please choose a front image.** If another save is already uploading, the page says **Please wait until the image upload has finished.** **Save** is unavailable while that upload runs.
+
+If an upload fails, the page says **Image upload failed: {detail} The selected image was kept.** The preview stays, so choose **Save** again. A side that already uploaded successfully is not uploaded a second time. **Cancel**, leaving the form, or opening another postcard discards an unfinished selection. That selection is not stored and is not attached to the next form.
+
+A file that is empty, larger than 20 MiB, or not PNG, JPEG, GIF, or WebP does not replace a useful selection that is already shown.
 
 **Cancel** leaves the form without saving.
-
-<!-- refresh-after: #45 -->
-
-> **Note:** Refresh after issue #45. On the current application, **New
-> postcard** still shows the text fields **Front image path** and **Back image
-> path**, with **Choose front image** and **Choose back image** beside them.
-> Issue #45 is expected to hide those path fields on the new-postcard form and
-> replace them with clickable previews. When that change is released, update
-> this section and keep the front-image requirement and optional back image
-> unchanged.
 
 ### Edit a postcard
 
@@ -272,8 +269,9 @@ The form loads the postcard's current record. Change the fields and choose
 **Save**. The share link does not change, because the application keeps the
 same share identifier.
 
-An older record that has no front image can still be found in Browse. It
-cannot be saved until **Front image path** is non-empty.
+When you edit a postcard, a stored image on this application's site is shown in the preview. Replacing or removing it changes the postcard only after **Save**. The form does not delete the old file.
+
+An older record that has no front image can still be found in Browse. It cannot be saved until you choose a front image.
 
 ### View a postcard
 
@@ -318,10 +316,19 @@ Browse columns are **ID**, **Front image**, **Back image**, **Year**,
 **Tags**, **Updated**, and **Actions**. Description is stored and exported,
 but it is not a column.
 
-The **Search…** box matches part of the year, description, image path, or tag
-text. The **Year** and **Tag** dropdowns match one exact stored value. Each
-dropdown starts at **All** and lists values that exist in the collection.
-**Reset filters** appears after you choose a value and clears every dropdown.
+The **Search…** box matches part of the year, description, stored image address, or tag text.
+
+**Year** starts at **All** and lists years that exist in the collection. It matches one exact stored value.
+
+**Tags** can select more than one tag. The list is labeled **Add tag filter**, and its first choice is **Add tag…**. Each selected tag appears as a chip under **Selected tag filters**. The page says **Tag filter {tag} added.**
+
+A postcard is shown only when it has every selected tag. The match is exact and case-sensitive: `Wien` does not match `wien`. The year filter and the search box still apply at the same time.
+
+To remove one tag, choose the **×** on its chip. The accessible name is **Remove tag filter {tag}**. The page says **Tag filter {tag} removed.** **Clear tags** removes every selected tag and says **All tag filters removed.** **Reset filters** clears the year and every tag filter. It appears only when a year or tag filter is active.
+
+Selected tags stay visible even after the last postcard that used them is deleted. Remove them yourself; the application does not drop them silently. A selected tag that no postcard has simply shows no rows.
+
+The browser address records the selected tags as repeated `tag` parameters, in the order you added them, for example `?tag=Wien&tag=Bridge`. Reloading the page, using Back and Forward, or sending that address keeps the same filters. An address with no `tag` parameter means no tag filter, even if this browser previously remembered one. An older address with one `tag` parameter still selects that one tag.
 
 **Sort by** defaults to **Newest first**. You can sort by **Year** or
 **Updated**. After you pick one of those, **Ascending** appears. Choose it to
@@ -334,9 +341,7 @@ Search, filters, and sorting combine. The first page shows up to 100
 postcards. **Show more postcards** appends the next page in the same order.
 Changing the search, a filter, or the sort returns to the first page.
 
-The browser remembers the language, sort, and filters for this site. It does
-not remember postcard text there. If storage is blocked, the choices still
-work until you reload the page.
+The browser remembers the language, sort, and filters for this site. It does not remember postcard text there. On Browse, the address is the source for the tag selection. If storage is blocked, the choices still work until you reload the page.
 
 A filter value that no longer exists can remain selected and then match
 nothing. The page shows **No postcards yet.** both for an empty collection and
@@ -363,26 +368,27 @@ Orphaned uploaded files can be removed later. See
 
 ## Images
 
-### Upload a front or back image
+### Choose a front or back image
 
-**Choose front image** and **Choose back image** open the browser's file
-picker. After a successful upload, the matching path field receives an address
-such as `/images/` followed by a generated name. The original file name and
-the path on your computer are not stored.
+The form shows a clickable preview for **Front image** and **Back image**. There is no visible path field.
 
-Accepted files are PNG, JPEG, GIF, and WebP, up to 20 MiB
-(20,971,520 bytes) each. The file contents must match the declared type. SVG
-and other formats are rejected.
+1. Click, tap, or focus the preview and press Enter or Space.
+2. The accessible names are **Choose front image** and **Choose back image**.
+3. An empty preview says **No image selected. Opens the file picker.**
+4. A selected file is previewed immediately and the page says **Image selected.** The file stays on your computer until you choose **Save**.
+5. The trash control clears that side. Its accessible name is **Remove front image** or **Remove back image**. The page says **Image removed.** You can choose the same file again.
 
-While the upload runs, the page says **Uploading image…** Then it says
-**Image uploaded.** A failed upload says **Image upload failed:** followed by
-the reason, and **The previous path was kept.**
+Accepted files are PNG, JPEG, GIF, and WebP, up to 20 MiB (20,971,520 bytes) each. The file contents must match the declared type. SVG and other formats are rejected. A rejected file does not replace a useful selection that is already shown.
 
-You may type a path instead of uploading. A typed path is stored as entered.
-Browse and the detail page display an image only when that path is an `http`
-or `https` address on this application's own site. A disk path, a `file:`
-address, or a link to another website is stored but shown as **Image
-unavailable**.
+On **Save**, each newly selected file is uploaded. The page says **Uploading image…**, then **Image uploaded.** The stored name is generated. The original file name and the path on your computer are not stored. The front image is required. The back image is optional.
+
+If the upload fails, the page says **Image upload failed: {detail} The selected image was kept.** Choose **Save** again. A side that already uploaded successfully is reused. **Save** is unavailable while an upload is running. Another save attempt says **Please wait until the image upload has finished.**
+
+**Cancel**, leaving the form, or opening another postcard abandons an unfinished selection. It is not uploaded, and it is not attached to the next form.
+
+Imported records and the API can still store an image address as text. Browse and the detail page display that image only when it is an `http` or `https` address on this application's own site. A disk path, a `file:` address, or a link to another website is stored but shown as **Image unavailable**. The form cannot type or edit those addresses.
+
+When editing, a stored image on this site is shown in the preview. Replacing or clearing it changes the postcard only after **Save**. The old file is not deleted by the form.
 
 ### Overview thumbnails and Pillow
 
@@ -506,16 +512,23 @@ There is no separate place field and no separate region field. Older
 collections that had those values keep them as tags after the schema 6
 upgrade described in [Upgrades and database migrations](#upgrades-and-database-migrations).
 
-<!-- refresh-after: #47 -->
+As you type in **New tag**, the page lists existing tags that start with what you typed. The list is labeled **Tag suggestions**. Suggestions come from tags already used in the collection. Tags already on this postcard are omitted. A tag that no postcard has yet is still allowed: type it and press Enter, or choose **Add tag**.
 
-> **Note:** Refresh after issue #47. The tag field does not yet suggest tags
-> already used on other postcards, and Tab does not accept a suggestion.
-> Issue #47 is expected to add that list. Until it is released, type each tag
-> or rely on the **Tag** filter in Browse to see values that already exist.
+Matching ignores letter case, but the stored spelling is kept. Exact-case matches are listed first, so typing `wien` can suggest the existing tag `Wien`.
 
-The **Tag** filter matches one whole tag exactly, including case. The search
-box matches tag text as part of a broader text search. A location moved into
-tags by the schema 6 upgrade remains findable in both ways.
+| Action | While suggestions are open |
+| --- | --- |
+| Tab | Adds the highlighted suggestion, or the first suggestion if none is highlighted, and stays in **New tag**. |
+| Down Arrow or Up Arrow | Moves through the suggestions. |
+| Enter | Adds the highlighted suggestion. If none is highlighted, Enter adds the text you typed and does not save the postcard. |
+| Escape | Closes the list without adding a tag. |
+| Click or tap a suggestion | Adds that tag. Leaving the suggestion before release does not add it. |
+
+Shift+Tab, and Tab when no list is open, move focus normally. While an input method is composing text, these keys do not accept a suggestion early.
+
+The page says **Tag {tag} added.** when a suggestion is accepted. It says **1 tag suggestion available.** or **{count} tag suggestions available.** when the number of suggestions changes.
+
+The Browse tag filter matches whole tags exactly. The search box matches tag text as part of a broader text search. A location moved into tags by the schema 6 upgrade remains findable in both ways.
 
 ## Export and import JSON
 
@@ -1011,6 +1024,7 @@ instead of writing a fallback release number into the PDF.
   through 3. Do not maintain a separate contents list in this file.
 - Keep heading text selectable and in reading order.
 - Keep markdown links to headings as in-document links.
+- Build the PDF from this file only. Do not include `docs/research/` or follow a link into it. Research notes are not release-guide content.
 - The only external link that needs to survive is the public project site
   `https://github.com/schmidt-software/picture-postcard-manager`. Image names
   and commands are text, not remote images.

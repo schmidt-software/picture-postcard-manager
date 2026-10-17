@@ -32,6 +32,7 @@ REQUIRED_HEADINGS = (
     "### Filter, sort, and page through Browse",
     "### Delete a postcard",
     "## Images",
+    "### Choose a front or back image",
     "### Overview thumbnails and Pillow",
     "### Add many images at once",
     "### Remove unreferenced images",
@@ -72,9 +73,14 @@ REQUIRED_SNIPPETS = (
     "picture-postcard-manager-user-guide-{{VERSION}}.pdf",
     "version: \"{{VERSION}}\"",
     "generated_on: \"{{GENERATED_ON}}\"",
-    "<!-- refresh-after: #45 -->",
-    "<!-- refresh-after: #47 -->",
     "There is no separate place field and no separate region field.",
+    "There is no visible path field.",
+    "No image selected. Opens the file picker.",
+    "Please choose a front image.",
+    "The selected image was kept.",
+    "?tag=Wien&tag=Bridge",
+    "Tag suggestions",
+    "Do not include `docs/research/`",
 )
 
 VISIBLE_LABEL_KEYS = (
@@ -104,10 +110,13 @@ VISIBLE_LABEL_KEYS = (
     "sharePostcard",
     "shareLink",
     "copyLink",
-    "frontImagePath",
+    "imagePickerPlaceholder",
     "chooseFrontImage",
-    "backImagePath",
     "chooseBackImage",
+    "removeFrontImage",
+    "removeBackImage",
+    "imageSelected",
+    "imageRemoved",
     "description",
     "newTag",
     "addTag",
@@ -128,6 +137,14 @@ VISIBLE_LABEL_KEYS = (
     "noImage",
     "versionLabel",
     "saved",
+    "filterTags",
+    "selectedTagFilters",
+    "addTagFilter",
+    "clearTagFilters",
+    "filterTagAdd",
+    "tagSuggestions",
+    "requiredFrontImage",
+    "imageUploadFailed",
 )
 
 
@@ -153,6 +170,10 @@ class UserGuideTests(unittest.TestCase):
         self.assertNotRegex(self.guide, r"\bv\d+\.\d+\.\d+\b")
         self.assertNotIn("/Users/", self.guide)
         self.assertNotIn("Closes #49", self.guide)
+        self.assertNotIn("refresh-after", self.guide)
+        self.assertNotIn("Refresh after", self.guide)
+        self.assertNotIn("Front image path", self.guide)
+        self.assertNotIn("Back image path", self.guide)
 
     def test_visible_english_labels_are_quoted(self):
         missing = [
@@ -160,6 +181,32 @@ class UserGuideTests(unittest.TestCase):
             if self.labels[key] not in self.guide
         ]
         self.assertEqual(missing, [])
+
+    def test_image_form_has_hidden_paths_and_clickable_pickers(self):
+        html = INDEX.read_text(encoding="utf-8")
+        self.assertIn('<input type="hidden" name="front_image_path">', html)
+        self.assertIn('<input type="hidden" name="back_image_path">', html)
+        self.assertNotIn('type="text" name="front_image_path"', html)
+        self.assertNotIn('data-i18n="frontImagePath"', html)
+        self.assertNotIn('data-i18n="backImagePath"', html)
+        self.assertNotIn("frontImagePath", self.labels)
+        self.assertNotIn("backImagePath", self.labels)
+        self.assertIn('id="front-image-control"', html)
+        self.assertIn('id="front-image-clear"', html)
+        self.assertIn('id="back-image-clear"', html)
+
+    def test_tag_controls_match_autocomplete_and_filter_source(self):
+        filters = (ROOT / "app" / "static" / "js" / "filters.js").read_text(encoding="utf-8")
+        tags = (ROOT / "app" / "static" / "js" / "tags.js").read_text(encoding="utf-8")
+        database = (ROOT / "app" / "db.py").read_text(encoding="utf-8")
+        self.assertIn("AND semantics", filters)
+        self.assertIn('url.searchParams.append("tag", tag)', filters)
+        self.assertIn("AND semantics", database)
+        for key in ("Tab", "ArrowDown", "ArrowUp", "Escape"):
+            self.assertIn(f'event.key === "{key}"', tags)
+        self.assertIn('event.key !== "Enter"', tags)
+        self.assertIn("every selected tag", self.guide)
+        self.assertIn("repeated `tag` parameters", self.guide)
 
     def test_current_ui_has_no_place_or_region_controls(self):
         html = INDEX.read_text(encoding="utf-8")

@@ -61,8 +61,13 @@ running without a module loader.
 
 Collectors and operators should use
 [docs/user-guide.md](docs/user-guide.md). A later release process is expected
-to attach a PDF built from that file. The PDF is not stored in Git, and the
+to attach a PDF built from that file only. The PDF is not stored in Git, and the
 guide source does not hard-code a release version.
+
+Research that is not part of the user guide lives under `docs/research/`.
+[Image-description services](docs/research/image-description-services.md) is a
+dated survey for a possible later feature. It is not a collector task and is
+not a PDF source.
 
 ## Running locally
 

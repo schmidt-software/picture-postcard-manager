@@ -103,7 +103,7 @@ Verdict: preferred default for private collections.
 
 ### Google Gemini paid tier
 
-Gemini Flash and Flash-Lite models are designed for inexpensive multimodal processing. Exact prices vary by model and may change. For a short description of one postcard, the cost is normally far below one US cent.
+Gemini Flash and Flash-Lite models are designed for inexpensive multimodal processing. Exact prices vary by model and may change. This note does not fix a per-postcard amount: current provider and model pricing, plus image-token accounting, must be benchmarked at implementation time.
 
 Advantages:
 
@@ -123,7 +123,7 @@ Official documentation:
 - [Claude API pricing](https://platform.claude.com/docs/en/about-claude/pricing)
 - [Claude vision guide](https://platform.claude.com/docs/en/build-with-claude/vision)
 
-Small/fast models are appropriate for this use case. Stronger models may produce richer descriptions but cost more. Even then, a short description should normally remain well below one cent per postcard.
+Small/fast models are appropriate for this use case. Stronger models may produce richer descriptions but cost more. This note does not fix a per-postcard amount. Current model pricing and the conversion of each image into tokens must be benchmarked at implementation time.
 
 ### OpenAI
 
@@ -189,9 +189,9 @@ Secrets must remain outside exports, logs, the database, and the repository. Clo
 
 ## Cost expectations
 
-For inexpensive cloud models, a short caption usually costs a small fraction of one US cent. A collection of 1,000 postcards will commonly cost less than one US dollar, but image resolution, token accounting, prompt size, response length, and model choice can materially change that estimate.
+Inexpensive cloud models are designed so that a short caption is a small part of the project cost, but this 2026-10-16 note does not fix a per-image or per-collection amount. Image resolution, token accounting, prompt size, response length, and model choice can change the result. Current provider and model pricing, including image-token accounting, must be benchmarked at implementation time.
 
-Run a small benchmark against current pricing before implementation. Quality, privacy, and predictable availability matter more than the raw API cost at this project scale.
+Quality, privacy, and predictable availability matter more than the raw API cost at this project scale.
 
 ## Open questions before implementation
 

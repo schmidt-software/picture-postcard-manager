@@ -268,6 +268,23 @@ chip with a remove button. Because tags are added one at a time, they may contai
 commas, spaces and any Unicode text. Browse shows the tags and the search box also
 matches tag text.
 
+While typing in the tag input, an autocomplete list suggests previously used
+tags whose beginning matches the typed text (ignoring surrounding whitespace).
+Matching is case-insensitive and Unicode-aware; suggestions keep their stored
+spelling, exclude tags already selected on the postcard, are unique and sorted
+alphabetically for the active UI language with exact-case prefix matches first.
+While the list is open, Tab accepts the first (or arrow-selected) suggestion
+and keeps focus in the input; otherwise Tab moves focus as usual. Arrow keys
+move through the list, Enter accepts the active suggestion (or adds the typed
+text as a new tag when none is active), Escape closes the list, and clicking
+or tapping a suggestion accepts it. The input implements the accessible
+combobox/listbox pattern and announces suggestion counts and accepted tags in
+the UI language through a polite live region. Suggestions come from the cached
+filter-values response (`/api/postcards/filters`) — no request is sent per
+keystroke — and refresh after saving, deleting, JSON import and bulk image
+import. If loading them fails, the list stays hidden and free tag entry keeps
+working; brand-new tags can always be typed and added.
+
 API rules: `tags` is an array of strings. Leading and trailing whitespace is
 trimmed; blank tags and non-string values are rejected with HTTP 400. Exact
 duplicates after trimming are dropped (comparison is case-sensitive, so `Berlin`

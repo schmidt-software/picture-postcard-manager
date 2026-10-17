@@ -373,7 +373,7 @@ class Database:
                 )
 
     @staticmethod
-    def _clean(data):
+    def _clean(data, allow_legacy_year=False):
         if not isinstance(data, dict):
             raise ValueError("postcard must be an object")
         unknown = set(data) - set(RECORD_FIELDS)
@@ -394,6 +394,9 @@ class Database:
                 value = str(value)
             elif not isinstance(value, str):
                 raise ValueError(f"{key} must be a string or null")
+            if (key == "year" and value and not allow_legacy_year
+                    and re.fullmatch(r"[0-9]{4}", value) is None):
+                raise ValueError("year must be empty or exactly four digits (0-9)")
             fields[key] = value
         return fields
 
@@ -570,8 +573,9 @@ class Database:
             ).fetchone()
         return self._row(row) if row else None
 
-    def _insert(self, data, keep_id=False, allow_legacy=False):
-        fields = self._clean(data)
+    def _insert(self, data, keep_id=False, allow_legacy=False,
+                allow_legacy_year=False):
+        fields = self._clean(data, allow_legacy_year=allow_legacy_year)
         if "uuid" in data:
             self._validate_uuid(data["uuid"])
         fields["uuid"] = data["uuid"] if keep_id and "uuid" in data else str(uuid4())
@@ -656,6 +660,10 @@ class Database:
         them.
         Replace preserves exported UUIDs; append generates new ones for copies.
         Version-2 exports retain those empty paths with record IDs and timestamps.
+        Full exported records (identified by id and both timestamps) may also
+        retain a pre-validation free-text year so existing backups remain
+        restorable. New/import-authored records must use an empty year or
+        exactly four ASCII digits.
         Unknown fields are rejected rather than discarded.
         """
         if mode not in ("append", "replace"):
@@ -692,7 +700,22 @@ class Database:
                         entry = self._merge_location_entry(entry)
                     if payload.get("schema_version", 0) >= 4 and "uuid" not in entry:
                         raise ValueError("schema version 4 and newer postcards must include uuid")
-                    self._insert(entry, keep_id=(mode == "replace"), allow_legacy=legacy)
+                    legacy_year = (
+                        mode == "replace"
+                        and payload.get("format") == "picture-postcard-manager"
+                        and payload.get("schema_version") in IMPORT_VERSIONS
+                        and isinstance(payload.get("exported_at"), str)
+                        and bool(payload["exported_at"].strip())
+                        and all(key in entry for key in (
+                            "id", "uuid", "created_at", "updated_at"
+                        ))
+                    )
+                    self._insert(
+                        entry,
+                        keep_id=(mode == "replace"),
+                        allow_legacy=legacy,
+                        allow_legacy_year=legacy_year,
+                    )
                 except (ValueError, sqlite3.IntegrityError) as exc:
                     raise ValueError(f"postcard {index}: {exc}") from exc
         return len(entries)

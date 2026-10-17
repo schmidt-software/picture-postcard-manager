@@ -68,6 +68,7 @@ What it does not do:
 | Mode | Who it is for | Address on first start |
 | --- | --- | --- |
 | Docker Compose from a local build | The usual single-computer or server install | `http://127.0.0.1:8000` |
+| Docker with the published release image | An install without a source checkout build | `http://127.0.0.1:8000` |
 | Python on the host | A single computer where Docker is not used | `http://127.0.0.1:8000` |
 
 The Compose install listens on the host's loopback interface only. Other
@@ -123,6 +124,42 @@ python3 -m app
 Open `http://127.0.0.1:8000`. The process listens on `127.0.0.1` and port
 8000 unless you set `PPM_HOST` and `PPM_PORT`. Stop it with Ctrl+C in that
 terminal. Data remains in `data/` next to the application.
+
+### Use the published release image
+
+This release publishes a multi-architecture container image (`linux/amd64`
+and `linux/arm64`) to the GitHub Container Registry, built from the exact
+release tag commit. The image includes the optional Pillow dependency, so
+overview thumbnails work without extra steps, and it runs as the same
+unprivileged `ppm` user as a local Compose build. For this release the image
+is available as `ghcr.io/schmidt-software/picture-postcard-manager:0.1.0`;
+the same image is also tagged `v0.1.0` and, as the most recent stable
+release at its publication, `latest`.
+
+To run it without building from source:
+
+```sh
+docker pull ghcr.io/schmidt-software/picture-postcard-manager:0.1.0
+
+docker run -d --name picture-postcard-manager \
+  -p 127.0.0.1:8000:8000 \
+  -v postcard-data:/data \
+  ghcr.io/schmidt-software/picture-postcard-manager:0.1.0
+```
+
+Then open `http://127.0.0.1:8000`. The named volume `postcard-data` holds the
+database and the uploaded images, and the `127.0.0.1:` prefix publishes the
+port on the loopback interface only, matching the Compose defaults.
+
+Docker Compose can use the published image instead of a local build: replace
+`build: .` with
+`image: ghcr.io/schmidt-software/picture-postcard-manager:0.1.0` in
+`compose.yaml`. Everything else (volume, health check, port mapping) stays
+the same.
+
+If the registry requires authentication in your environment, log in first
+with a token that has `read:packages`: `docker login ghcr.io`. Whether
+anonymous pulls work depends on the package's visibility settings on GitHub.
 
 ## First start and stored data
 

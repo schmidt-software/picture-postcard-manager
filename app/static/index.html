@@ -38,9 +38,17 @@
         <label><span data-i18n="year">Year</span>
           <select id="filter-year" data-filter="year"></select>
         </label>
-        <label><span data-i18n="tag">Tag</span>
-          <select id="filter-tag" data-filter="tag"></select>
-        </label>
+        <fieldset class="filter-tags">
+          <legend data-i18n="filterTags">Tags</legend>
+          <ul id="filter-tag-list" class="tag-list" data-i18n-aria-label="selectedTagFilters"
+              aria-label="Selected tag filters"></ul>
+          <div class="filter-tag-controls">
+            <select id="filter-tag" data-filter="tag" data-i18n-aria-label="addTagFilter"
+                    aria-label="Add tag filter"></select>
+            <button type="button" id="filter-tag-clear" data-i18n="clearTagFilters" hidden>Clear tags</button>
+          </div>
+          <span id="filter-tag-status" class="visually-hidden" role="status" aria-live="polite"></span>
+        </fieldset>
         <button type="button" id="filter-reset" data-i18n="resetFilters" hidden>Reset filters</button>
       </div>
       <div class="table-wrap">

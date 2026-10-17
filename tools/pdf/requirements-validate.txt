@@ -1,0 +1,7 @@
+# Hash-pinned dependency for tools/pdf/validate_pdf.py only (Refs #49).
+# Install with:
+#   pip install --require-hashes -r tools/pdf/requirements-validate.txt
+# pypdf is pure Python, so the single universal wheel covers every platform.
+pypdf==6.21.0 \
+    --hash=sha256:3aec619699dacb1b73f57e87d9adaa4424814517b2cc028de20adba5a37af4c4 \
+    --hash=sha256:c16174c8653abafbe4d023b3c9227d226938d9579ffb5a73b4fac7756c0895a6

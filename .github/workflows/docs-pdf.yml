@@ -1,0 +1,72 @@
+# Build and validate the user-guide PDF on pull requests that touch anything
+# the guide documents (Refs #49): the application, UI labels, deployment
+# files, documentation, or the PDF pipeline itself.
+#
+# This keeps the guide buildable and consistent before a release ever runs:
+# a broken guide, a leaked placeholder, or a renderer regression fails the PR
+# instead of the release. Tool pinning matches the release workflow: the
+# renderer is a digest-pinned container (tools/pdf/build_pdf.py) and the
+# validator dependency is hash-pinned (tools/pdf/requirements-validate.txt).
+#
+# The build uses a syntactically valid dummy tag (v0.0.0) because pull
+# requests have no release tag; the release workflow injects the real one.
+# No permissions beyond reading the checkout; nothing is uploaded anywhere.
+
+name: Docs PDF
+
+on:
+  pull_request:
+    paths:
+      - "app/**"
+      - "docs/**"
+      - "tools/pdf/**"
+      - ".github/workflows/**"
+      - "README.md"
+      - "CONTRIBUTING.md"
+      - "Dockerfile"
+      - "compose.yaml"
+      - "compose.proxy.yaml"
+      - "proxy/**"
+      - "requirements-optional.txt"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-pdf-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Build the current guide PDF
+        run: |
+          python3 tools/pdf/build_pdf.py \
+            --version v0.0.0 \
+            --date 2000-01-01 \
+            --output-dir "$RUNNER_TEMP/pdf"
+
+      - name: Build the v0.1.0 backfill snapshot PDF
+        run: |
+          python3 tools/pdf/build_pdf.py \
+            --version v0.1.0 \
+            --date 2000-01-01 \
+            --source docs/releases/v0.1.0/user-guide.md \
+            --output-dir "$RUNNER_TEMP/pdf-snapshot"
+
+      - name: Validate both PDFs
+        run: |
+          pip install --require-hashes -r tools/pdf/requirements-validate.txt
+          python3 tools/pdf/validate_pdf.py \
+            --pdf "$RUNNER_TEMP/pdf/picture-postcard-manager-user-guide-v0.0.0.pdf" \
+            --version v0.0.0
+          python3 tools/pdf/validate_pdf.py \
+            --pdf "$RUNNER_TEMP/pdf-snapshot/picture-postcard-manager-user-guide-v0.1.0.pdf" \
+            --version v0.1.0

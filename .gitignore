@@ -5,6 +5,9 @@ __pycache__/
 .env
 backups/
 
+# Generated user-guide PDFs (built by tools/pdf/build_pdf.py, never committed)
+dist/
+
 # Local database files
 data/*
 !data/.gitkeep

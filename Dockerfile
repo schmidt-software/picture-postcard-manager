@@ -30,7 +30,14 @@ RUN chmod a+r requirements-optional.txt \
 # world-read permissions are normalized, because COPY preserves host modes
 # and a restrictive umask on the build host would otherwise hide the code.
 COPY app ./app
+# Ship the license inside the image so redistributed containers carry the
+# required MIT copyright and permission notice (Refs #61).
+COPY LICENSE ./LICENSE
 RUN chmod -R a+rX /srv/app
+
+# Standard OCI metadata; release builds add revision/version labels in CI.
+LABEL org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.source="https://github.com/schmidt-software/picture-postcard-manager"
 
 # Public version string shown in the UI footer (issue #44). Release images
 # bake in the exact release version via --build-arg PPM_VERSION=X.Y.Z (see

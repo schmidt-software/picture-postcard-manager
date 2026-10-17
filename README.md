@@ -1053,3 +1053,10 @@ with Pillow.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+This project is licensed under the [MIT License](LICENSE)
+(SPDX identifier: `MIT`). Published container images include the
+`org.opencontainers.image.licenses=MIT` label and ship the `LICENSE`
+file at `/srv/app/LICENSE`.

@@ -156,13 +156,33 @@ The form stores four canonical fields:
 |-------|-------------|-------------|
 | `front_image_path` | Required | Non-empty path or reference to the front image |
 | `back_image_path` | Optional | Path or reference to the back image |
-| `year` | Optional | Exactly four ASCII digits (for example `1908`); legacy free-text values remain readable and restorable from full exports |
+| `year` | Optional | Free-form text, such as `1908`, `around 1800`, `ca. 1960`, or `unknown`; stored exactly as entered |
 | `description` | Optional | Free-form description |
 
 Image paths are internal state: the form fills them by uploading the selected
 images (see [Image selection and uploads](#image-selection-and-uploads)) and
 never displays or edits them as text. Paths from imports or the API are stored
 as provided. Optional values can be left empty.
+
+The year field is an editable combobox
+([#65](https://github.com/schmidt-software/picture-postcard-manager/issues/65)):
+any text can be typed and saved verbatim, and the distinct year values already
+stored in the collection are offered as suggestions. Focusing the empty field
+lists every known value; typing narrows the list to case-insensitive prefix
+matches. Arrow keys move through the list, Enter accepts the active suggestion
+(without one, Enter keeps its normal form behavior), Escape closes the list
+without changing the value, and clicking or tapping a suggestion fills the
+field while keeping focus in it for further editing. The input implements the
+accessible combobox/listbox pattern and announces suggestion counts and
+accepted values in the UI language through a polite live region. Suggestions
+come from the cached filter-values response (`/api/postcards/filters`) — no
+request is sent per keystroke — and refresh after saving, deleting, JSON
+import and bulk image import. If loading them fails, the list stays hidden and
+free-form year entry keeps working. Selecting a suggestion never restricts
+input: values that are not suggested remain valid. The exactly-four-digit
+validation introduced by
+[#60](https://github.com/schmidt-software/picture-postcard-manager/issues/60)
+was removed from the UI, the API and import validation by #65.
 
 The legacy `title` and `notes` fields were removed in schema version 5
 ([#23](https://github.com/schmidt-software/picture-postcard-manager/issues/23)).

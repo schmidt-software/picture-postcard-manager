@@ -232,7 +232,7 @@ in this browser only.
 
 The interface is designed for touch from 320 px wide. Navigation and controls wrap instead of extending beyond the screen, and Browse presents each postcard as a labeled card on narrow displays. Rotate the phone if you prefer a wider view; no feature requires hover.
 
-Buttons and form controls use touch-friendly targets. When entering text, the focused control remains reachable above the on-screen keyboard. The **Year** field opens a numeric keyboard where the browser supports it. Image pickers use the device's standard chooser, which may offer the photo library or camera. Safe-area padding keeps controls clear of notches and home indicators.
+Buttons and form controls use touch-friendly targets. When entering text, the focused control remains reachable above the on-screen keyboard. Image pickers use the device's standard chooser, which may offer the photo library or camera. Safe-area padding keeps controls clear of notches and home indicators.
 
 ### Create a postcard
 
@@ -240,7 +240,7 @@ Buttons and form controls use touch-friendly targets. When entering text, the fo
 2. Choose the **Front image** preview. An empty preview says **No image selected. Opens the file picker.** Click, tap, or press Enter or Space. The accessible name is **Choose front image**.
 3. The selected file is shown at once. Nothing is uploaded until you choose **Save**.
 4. Optionally choose the **Back image** preview the same way. The back image is optional.
-5. Optionally add the four-digit year, description, and tags. Existing imported cards may still display older free-text years; correct or clear such a value before saving an edited card.
+5. Optionally add the year, description, and tags. The year is free-form text: `1905`, `around 1800`, `ca. 1960`, or `unknown` are all valid, and your spelling is kept exactly. As you type in **Year**, a list labeled **Year suggestions** offers year values already used in the collection; focusing the empty field shows all of them. Choose a suggestion to fill the field, or simply keep typing — a value that is not suggested is always allowed. Down Arrow and Up Arrow move through the suggestions, Enter fills in the highlighted suggestion, Escape closes the list without changing the value, and a click or tap fills in that suggestion. The page says **Year {year} selected.** when a suggestion is chosen, and **1 year suggestion available.** or **{count} year suggestions available.** when the number of suggestions changes.
 6. Choose **Save**.
 
 The page says **Uploading image…** and then **Image uploaded.** while it stores the selected files. It then confirms **Postcard saved.** and returns to Browse.
@@ -249,7 +249,7 @@ The page says **Uploading image…** and then **Image uploaded.** while it store
 | --- | --- | --- |
 | **Front image** | Yes | A PNG, JPEG, GIF, or WebP file, up to 20 MiB |
 | **Back image** | No | The same kinds of file, or none |
-| **Year** | No | Exactly four digits, such as `1905`; leave it empty when unknown |
+| **Year** | No | Any text, such as `1905`, `around 1800`, `ca. 1960`, or `unknown`; leave it empty when unknown |
 | **Description** | No | Any notes about the postcard |
 | **Tags** | No | Location and other labels; see [Tags and search](#tags-and-search) |
 

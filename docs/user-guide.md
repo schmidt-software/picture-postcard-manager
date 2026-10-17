@@ -228,6 +228,12 @@ default even when the browser is set to another language. Choose **Deutsch**
 to switch to German, or **English** to switch back. The choice is remembered
 in this browser only.
 
+### Use the application on a phone or tablet
+
+The interface is designed for touch from 320 px wide. Navigation and controls wrap instead of extending beyond the screen, and Browse presents each postcard as a labeled card on narrow displays. Rotate the phone if you prefer a wider view; no feature requires hover.
+
+Buttons and form controls use touch-friendly targets. When entering text, the focused control remains reachable above the on-screen keyboard. The **Year** field opens a numeric keyboard where the browser supports it. Image pickers use the device's standard chooser, which may offer the photo library or camera. Safe-area padding keeps controls clear of notches and home indicators.
+
 ### Create a postcard
 
 1. Choose **New postcard**.

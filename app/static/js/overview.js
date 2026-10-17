@@ -7,7 +7,7 @@ import { showMessage, showApiError, askConfirmation } from "./feedback.js";
 import { imagePreview } from "./preview.js";
 import { navigate, leavePostcard, currentRouteRequest } from "./routing.js";
 import { currentSort, initSorting } from "./sorting.js";
-import { currentFilters, FILTER_KEYS, loadFilterOptions, initFilters } from "./filters.js";
+import { currentFilters, loadFilterOptions, initFilters } from "./filters.js";
 
 // Overview pagination: number of rows fetched per request, the rows loaded so
 // far (also re-rendered after a language change), and whether the last page
@@ -28,15 +28,19 @@ export async function loadList(append = false) {
   try {
     const q = $("#search").value.trim();
     const offset = append && currentItems ? currentItems.length : 0;
-    const params = [`limit=${PAGE_SIZE}`, `offset=${offset}`];
-    if (q) params.push(`q=${encodeURIComponent(q)}`);
+    const params = new URLSearchParams();
+    params.set("limit", PAGE_SIZE);
+    params.set("offset", offset);
+    if (q) params.set("q", q);
     if (currentSort.key) {
-      params.push(`sort=${currentSort.key}`, `dir=${currentSort.direction}`);
+      params.set("sort", currentSort.key);
+      params.set("dir", currentSort.direction);
     }
-    for (const key of FILTER_KEYS) {
-      if (currentFilters[key]) params.push(`${key}=${encodeURIComponent(currentFilters[key])}`);
-    }
-    const items = await api(`/api/postcards?${params.join("&")}`);
+    if (currentFilters.year) params.set("year", currentFilters.year);
+    // Repeated tag parameters, AND semantics (issue #52); URLSearchParams
+    // escapes every value, so special characters never corrupt the query.
+    for (const tag of currentFilters.tag) params.append("tag", tag);
+    const items = await api(`/api/postcards?${params}`);
     if (request !== listRequest) return;
     currentItems = append && currentItems ? currentItems.concat(items) : items;
     listComplete = items.length < PAGE_SIZE;

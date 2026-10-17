@@ -15,6 +15,23 @@ export function thumbnailUrl(url) {
   return new URL(THUMBS_PREFIX + name, url.href);
 }
 
+// Resolve an image path to a same-origin http(s) URL, or null. Used for all
+// previews so external hosts and active-content URLs from imported data are
+// never contacted or rendered.
+export function sameOriginImageUrl(imagePath) {
+  if (typeof imagePath !== "string" || !imagePath.trim()) return null;
+  let url;
+  try {
+    url = new URL(imagePath, window.location.href);
+  } catch (error) {
+    if (error.name !== "TypeError") throw error;
+    return null;
+  }
+  if (url.origin !== new URL(window.location.href).origin
+      || !["http:", "https:"].includes(url.protocol)) return null;
+  return url;
+}
+
 export function imagePreview(imagePath, side, fullSize = false) {
   const cell = document.createElement(fullSize ? "figure" : "td");
   if (fullSize) {
@@ -29,18 +46,8 @@ export function imagePreview(imagePath, side, fullSize = false) {
   fallback.dataset.i18n = imagePath ? "imageUnavailable" : "noImage";
   fallback.textContent = translate(fallback.dataset.i18n);
   cell.append(fallback);
-  if (typeof imagePath !== "string" || !imagePath.trim()) return cell;
-
-  let url;
-  try {
-    url = new URL(imagePath, window.location.href);
-  } catch (error) {
-    if (error.name !== "TypeError") throw error;
-    return cell;
-  }
-  // Do not contact external hosts or allow active-content URLs from imported data.
-  if (url.origin !== new URL(window.location.href).origin
-      || !["http:", "https:"].includes(url.protocol)) return cell;
+  const url = sameOriginImageUrl(imagePath);
+  if (!url) return cell;
 
   const image = document.createElement("img");
   image.className = fullSize ? "postcard-photo" : "postcard-thumbnail";

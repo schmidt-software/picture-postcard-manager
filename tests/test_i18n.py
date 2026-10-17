@@ -72,11 +72,14 @@ class LocalizationTest(unittest.TestCase):
         file_input = next(attrs for tag, attrs in self.html.elements
                           if tag == "input" and attrs.get("type") == "file")
         self.assertIn("hidden", file_input)
-        required = next(attrs for tag, attrs in self.html.elements
-                        if tag == "input" and "required" in attrs)
-        for error_id in (required["aria-describedby"], "file-error"):
+        # Validation errors are rendered as localized alert elements, not via
+        # native (language-dependent) browser validation.
+        for error_id in ("front-image-error", "file-error"):
             attrs = next(attrs for _, attrs in self.html.elements if attrs.get("id") == error_id)
             self.assertEqual(attrs["role"], "alert")
+        control = next(attrs for _, attrs in self.html.elements
+                       if attrs.get("id") == "front-image-control")
+        self.assertIn("front-image-error", control["aria-describedby"])
         source = "\n".join(
             file.read_text()
             for file in [STATIC / "app.js", *sorted((STATIC / "js").glob("*.js"))])

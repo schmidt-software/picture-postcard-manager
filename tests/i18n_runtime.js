@@ -23,6 +23,7 @@ class Element {
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
   setAttribute(name, value) { this.attributes[name] = value; }
+  removeAttribute(name) { delete this.attributes[name]; }
   focus() { this.focused = true; }
   select() { this.selected = true; }
   click() { this.clicked = true; }
@@ -79,6 +80,8 @@ function setup(saved = null, blockedStorage = false, options = {}) {
   const requests = [];
   const location = new URL(options.url ?? "http://127.0.0.1:8000/");
   const windowListeners = {};
+  const timers = new Map();
+  let timerId = 0;
   const context = vm.createContext({
     window: {
       location,
@@ -107,6 +110,7 @@ function setup(saved = null, blockedStorage = false, options = {}) {
     },
     navigator: {},
     URL,
+    URLSearchParams,
     document: {
       documentElement: {},
       querySelector: (selector) => elements.get(selector),
@@ -139,13 +143,24 @@ function setup(saved = null, blockedStorage = false, options = {}) {
       if (options.fetch) return options.fetch(url, requestOptions);
       return { ok: true, status: 200, json: async () => [] };
     },
-    setTimeout: () => 1,
-    clearTimeout() {},
+    // Deterministic fake timers: callbacks are stored, never auto-run, and
+    // executed only when a test calls runTimers() explicitly.
+    setTimeout: (callback) => {
+      timers.set(++timerId, callback);
+      return timerId;
+    },
+    clearTimeout: (id) => { timers.delete(id); },
   });
   vm.runInContext(fs.readFileSync(path.join(staticDir, "languages.js"), "utf8"), context);
   vm.runInContext(bundleSource(staticDir), context);
   return {
     context, elements, all, storage, requests, postcardForm, importForm, windowListeners,
+    timers,
+    runTimers: () => {
+      const pending = [...timers.values()];
+      timers.clear();
+      for (const callback of pending) callback();
+    },
     run: (source) => vm.runInContext(source, context),
     get: (id) => elements.get(`#${id}`),
   };
@@ -163,10 +178,10 @@ async function runTests() {
 
   const ui = setup();
   const { run, get, postcardForm, importForm, context, requests } = ui;
-  const primary = Object.values(postcardForm.elements).find((el) => el.required);
-  const secondary = Object.values(postcardForm.elements).find((el) =>
-    el.name !== "id" && el !== primary);
-  const validationError = get(primary.attributes["aria-describedby"]);
+  // The required front image lives in a hidden input behind the image picker.
+  const primary = postcardForm.elements.front_image_path;
+  const secondary = postcardForm.elements.description;
+  const validationError = get("front-image-error");
   const requiredMessage = () => run('translate("requiredFrontImage")');
   await new Promise(setImmediate);
   run('applyLanguage("de")');
@@ -202,13 +217,11 @@ async function runTests() {
   await postcardForm.emit("submit");
   assert.equal(requests.length, originalRequests);
   assert.equal(validationError.textContent, requiredMessage());
-  assert.equal(primary.focused, true);
-  assert.equal(primary.attributes["aria-invalid"], "true");
+  assert.equal(get("front-image-control").focused, true);
+  assert.equal(get("front-image-control").attributes["aria-invalid"], "true");
   run('applyLanguage("de")');
   assert.equal(validationError.textContent, requiredMessage());
   primary.value = "  User <text>  ";
-  await primary.emit("input");
-  assert.equal(validationError.hidden, true);
 
   context.fetch = async (url, options) => {
     requests.push({ url, options });

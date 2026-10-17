@@ -7,7 +7,7 @@ It runs locally on a single machine or on a server for central access.
 
 - Entry form to create, edit and delete postcards
 - Browse mode with search
-- Image upload for the front and back image paths
+- Image selection with local previews for the front and back image
 - SQLite database for persistence
 - Export of the whole database to JSON and import from JSON (append or replace)
 - English and German interface with a persistent language selector
@@ -131,9 +131,10 @@ The form stores four canonical fields:
 | `year` | Optional | Text, allowing approximate dates and ranges |
 | `description` | Optional | Free-form description |
 
-Image paths can be typed manually or filled by uploading an image (see
-[Image uploads](#image-uploads)); manually entered paths are stored as entered.
-Optional values can be left empty.
+Image paths are internal state: the form fills them by uploading the selected
+images (see [Image selection and uploads](#image-selection-and-uploads)) and
+never displays or edits them as text. Paths from imports or the API are stored
+as provided. Optional values can be left empty.
 
 The legacy `title` and `notes` fields were removed in schema version 5
 ([#23](https://github.com/schmidt-software/picture-postcard-manager/issues/23)).
@@ -187,23 +188,38 @@ Migrated records without a front image remain available in browse and search;
 they must be given a non-empty `front_image_path` before they can be edited.
 The database migration does not discard legacy data.
 
-## Image uploads
+## Image selection and uploads
 
-Next to each image path field, **Choose front image** and **Choose back image**
-open the browser's file picker. The selected file is uploaded to the server, and on
-success only the corresponding path field is set to the stored image's URL, e.g.
-`/images/3f2a…9c.png`. The front image remains required and the back image optional.
-Manual paths can still be entered at any time; typing into a field while its upload
-is running discards that upload's result.
+The form shows one image picker per side instead of path fields. An empty
+picker displays a localized placeholder; clicking, tapping or pressing
+Enter/Space on the focused control opens the browser's file picker. A selected
+file is previewed locally via an object URL (`URL.createObjectURL`) — nothing
+is uploaded yet — and a trash button with a localized accessible label clears
+the selection, its preview and the file input, so the same file can be chosen
+again. Replaced and discarded previews have their object URLs revoked.
+
+When the form is saved, pending selections are uploaded first and on success
+only the corresponding hidden path state is set to the stored image's URL,
+e.g. `/images/3f2a…9c.png`, which the postcard is then saved with. The front
+image remains required and the back image optional. Because uploads happen
+during save, abandoned forms leave no orphaned files; only a save that uploads
+images but then fails to store the postcard can orphan the uploaded files (see
+[cleanup](#cleaning-up-orphaned-images)).
+
+When editing a postcard, stored same-origin images are shown as previews.
+Replacing or removing an image only changes the association when the form is
+saved; stored files are never deleted by the form.
 
 - Supported formats: PNG, JPEG, GIF and WebP. The declared type must match the
   file's signature; SVG and other formats are rejected.
 - Maximum size: 20 MiB (20,971,520 bytes) per image.
 - Stored files get a random generated name; the client's filename and local path
   are never sent or used, and existing files are never overwritten.
-- If an upload fails, the error is shown next to the button and the previous path
-  is kept. Saving is disabled while an upload is running. Results of uploads that
-  finish after the form was switched, reset or cancelled are ignored.
+- If an upload fails during save, the error is shown next to the picker, the
+  selection and preview are kept, and the save is aborted so it can simply be
+  retried; already uploaded files are reused instead of being uploaded again.
+  Saving is disabled while uploads are running. Uploads whose form was
+  switched, reset or cancelled in the meantime never affect the next form.
 - Uploaded files are not deleted automatically when a postcard is deleted or its
   path changed; use the [orphaned-image cleanup](#cleaning-up-orphaned-images)
   command to remove unreferenced files.
@@ -259,6 +275,28 @@ chip with a remove button. Because tags are added one at a time, they may contai
 commas, spaces and any Unicode text. Browse shows the tags and the search box also
 matches tag text.
 
+While typing in the tag input, an autocomplete list suggests previously used
+tags whose beginning matches the typed text (ignoring surrounding whitespace).
+Matching is case-insensitive and Unicode-aware: both sides are normalized to
+NFC first (so composed and decomposed spellings like `é` vs `e` + combining
+accent match in both directions) and then lowercased for the active UI locale
+(`toLocaleLowerCase`). This is a locale lowercase fold, not full Unicode case
+folding — for example `ss` does not match `ß`, while the capital `ẞ` does.
+Suggestions keep their stored
+spelling, exclude tags already selected on the postcard, are unique and sorted
+alphabetically for the active UI language with exact-case prefix matches first.
+While the list is open, Tab accepts the first (or arrow-selected) suggestion
+and keeps focus in the input; otherwise Tab moves focus as usual. Arrow keys
+move through the list, Enter accepts the active suggestion (or adds the typed
+text as a new tag when none is active), Escape closes the list, and clicking
+or tapping a suggestion accepts it. The input implements the accessible
+combobox/listbox pattern and announces suggestion counts and accepted tags in
+the UI language through a polite live region. Suggestions come from the cached
+filter-values response (`/api/postcards/filters`) — no request is sent per
+keystroke — and refresh after saving, deleting, JSON import and bulk image
+import. If loading them fails, the list stays hidden and free tag entry keeps
+working; brand-new tags can always be typed and added.
+
 API rules: `tags` is an array of strings. Leading and trailing whitespace is
 trimmed; blank tags and non-string values are rejected with HTTP 400. Exact
 duplicates after trimming are dropped (comparison is case-sensitive, so `Berlin`
@@ -303,25 +341,44 @@ image loading).
 
 ### Filters
 
-Dropdowns above the overview narrow the collection by an exact
-year or tag; each lists the values that currently exist in the collection.
+Controls above the overview narrow the collection by an exact
+year and by any number of tags; the choices list the values that currently
+exist in the collection. The tag filter uses **AND semantics**: a postcard
+matches only when it carries every selected tag (it may carry additional
+tags). Selected tags appear as removable chips with a **Clear tags** action;
+the add-select offers the remaining tags in a deterministic locale-aware
+order with their stored spelling, excluding already-selected ones. Tag
+matching is exact and case-sensitive, like the tag editor.
 Filters combine with each other, with the search box, with sorting and with
 pagination
 (**Show more postcards** continues the filtered, sorted list), and **Reset filters**
-clears them all. The selection is stored in the browser's local storage and
-restored on reload, like the interface language. The dropdowns refresh
+clears them all, including every selected tag. The selection is stored in the
+browser's local storage and restored on reload, like the interface language;
+a single-tag selection stored by an older version is migrated automatically.
+The selected tags are also mirrored into the overview URL as repeated
+`tag` parameters (for example `?tag=Vienna&tag=Night`). On entering the
+overview the URL is authoritative: its tag parameters are applied over any
+stored selection, and a URL without `tag` parameters means no tag filter —
+so reload, Back/Forward navigation and shared overview URLs always show
+exactly the selection they encode; URLs
+with a single `tag` parameter keep working. The choices refresh
 whenever the collection changes — after saving, deleting (also directly in
 the overview), importing a JSON file, or a bulk image import — so they always
 list only existing values. A
 selected or restored value that no postcard offers anymore (for example
-because its last postcard was just deleted) remains selectable and simply
-yields an empty result until it is changed or reset.
+because its last postcard was just deleted) remains selected and simply
+yields an empty result until it is removed or reset.
 
 The REST API accepts the same filters as exact-match query parameters on
 `GET /api/postcards` (`year`, `tag`), combinable with `q`,
-`limit` and `offset`. `GET /api/postcards/filters` returns the distinct
-non-empty values for each filterable field. The former `place` and `region`
-filter parameters were removed with their fields and now return HTTP 400.
+`limit` and `offset`. The `tag` parameter may be repeated; a postcard must
+contain every requested tag (exact, case-sensitive element match against the
+JSON tag array, never a substring or raw-JSON text match). Duplicate repeated
+values are deduplicated before the query runs and do not change the result;
+blank `tag` values return HTTP 400. `GET /api/postcards/filters` returns the
+distinct non-empty values for each filterable field. The former `place` and
+`region` filter parameters were removed with their fields and now return
+HTTP 400.
 
 ### Sorting
 
@@ -722,6 +779,22 @@ replacing `build: .` with
 `compose.yaml`; everything else (volume, healthcheck, port mapping) stays the
 same.
 
+## Release announcements (Mastodon)
+
+Every published **stable** GitHub Release is automatically announced on the
+Mastodon instance <https://kanoa.de>
+(workflow: `.github/workflows/announce-release.yml`). The status contains the
+release name, tag, a truncated excerpt of the release notes and a link to the
+release page. Drafts and pre-releases are never announced, matching the
+container-image convention above where pre-releases are previews that never
+become `latest`.
+
+The workflow authenticates with the `MASTODON_ACCESS_TOKEN` repository
+secret: a Mastodon access token for the announcing account on `kanoa.de`
+with the `write:statuses` scope (create it under *Preferences → Development →
+New application*). Without the secret the workflow fails without posting
+anything; the token value itself is never logged.
+
 ## Configuration
 
 | Variable      | Default              | Description              |
@@ -769,7 +842,7 @@ to `dev`.
 |--------|------------------------------|-----------------------------------------------|
 | GET    | `/api/health`                | Lightweight health check (server and database) |
 | GET    | `/api/version`               | Public version string of the running build (see [Application version](#application-version)) |
-| GET    | `/api/postcards?q=<text>&year=&tag=&sort=<key>&dir=<asc\|desc>&limit=<n>&offset=<n>` | List postcards (search, exact-match filters, optional sorting and pagination) |
+| GET    | `/api/postcards?q=<text>&year=&tag=&tag=&sort=<key>&dir=<asc\|desc>&limit=<n>&offset=<n>` | List postcards (search, exact-match filters — `tag` repeatable with AND semantics — optional sorting and pagination) |
 | GET    | `/api/postcards/filters`     | Distinct values for the overview filters      |
 | POST   | `/api/postcards`             | Create a postcard                             |
 | GET    | `/api/postcards/<id>`        | Get a postcard                                |

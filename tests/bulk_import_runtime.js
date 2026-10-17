@@ -190,9 +190,10 @@ async function refreshTests() {
   await importing;
   await flush();
   assert.ok(values("tag").includes("mountain"),
-    "bulk-imported tag must appear in the filter dropdown");
-  assert.equal(get("filter-tag").value, "street",
-    "selection must survive the refresh");
+    "bulk-imported tag must appear in the filter choices");
+  assert.deepEqual(
+    get("filter-tag-list").children.map((li) => li.children[0].textContent),
+    ["street"], "selection must survive the refresh");
 }
 
 runTests().catch((error) => {

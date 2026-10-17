@@ -6,19 +6,19 @@
 
 import { initLanguage } from "./js/i18n.js";
 import { initFooter } from "./js/footer.js";
-import { initTags } from "./js/tags.js";
-import { initUploads, resetUploads } from "./js/upload.js";
+import { initTags, resetTagSuggestions } from "./js/tags.js";
+import { initImagePickers, resetImagePickers } from "./js/upload.js";
 import { initDetail, openDetail, clearCurrentDetail } from "./js/detail.js";
 import { initForm, openEdit, openForm } from "./js/form.js";
 import { initImport } from "./js/import.js";
 import { initBulkImport } from "./js/bulk.js";
 import { initOverview, loadList } from "./js/overview.js";
-import { loadFilterOptions } from "./js/filters.js";
+import { loadFilterOptions, syncFiltersFromUrl, renderFilterOptions } from "./js/filters.js";
 import { initRouting, route } from "./js/routing.js";
 
 initLanguage();
 initTags();
-initUploads();
+initImagePickers();
 initDetail();
 initForm();
 initImport();
@@ -29,11 +29,19 @@ initRouting({
   openEdit,
   openForm,
   onBrowse() {
+    // Reconcile the tag selection with the URL first (shared URLs, reload,
+    // Back/Forward), so the list request below already uses it.
+    if (syncFiltersFromUrl()) renderFilterOptions();
     loadFilterOptions();
     return loadList();
   },
   onDetailHidden: clearCurrentDetail,
-  onEditHidden: resetUploads,
+  // Leaving the edit view resets the image pickers and cancels any pending
+  // tag-autocomplete popup/timer so nothing outlives the view.
+  onEditHidden() {
+    resetImagePickers();
+    resetTagSuggestions();
+  },
 });
 route();
 // After route(): the initial view's data request stays first, the version

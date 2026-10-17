@@ -270,7 +270,12 @@ matches tag text.
 
 While typing in the tag input, an autocomplete list suggests previously used
 tags whose beginning matches the typed text (ignoring surrounding whitespace).
-Matching is case-insensitive and Unicode-aware; suggestions keep their stored
+Matching is case-insensitive and Unicode-aware: both sides are normalized to
+NFC first (so composed and decomposed spellings like `é` vs `e` + combining
+accent match in both directions) and then lowercased for the active UI locale
+(`toLocaleLowerCase`). This is a locale lowercase fold, not full Unicode case
+folding — for example `ss` does not match `ß`, while the capital `ẞ` does.
+Suggestions keep their stored
 spelling, exclude tags already selected on the postcard, are unique and sorted
 alphabetically for the active UI language with exact-case prefix matches first.
 While the list is open, Tab accepts the first (or arrow-selected) suggestion

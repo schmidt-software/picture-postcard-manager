@@ -20,6 +20,11 @@ let suggestions = [];
 let activeIndex = -1;
 let inputFocused = false;
 let composing = false;
+// True while a pointer press on an option is in flight (pointerdown/mousedown
+// seen, click not yet dispatched). Some touch-first browsers blur the input
+// despite the preventDefault; the blur handler then defers the close so the
+// following click/tap can still accept the option exactly once.
+let pointerSelectionPending = false;
 let announcedCount = -1;
 
 export function getTags() {
@@ -69,25 +74,33 @@ function isListOpen() {
   return suggestions.length > 0;
 }
 
-// All known tags that start with the trimmed input (case-insensitive in the
-// active UI locale, Unicode-aware via toLocaleLowerCase), excluding tags that
-// are already selected. Order is deterministic: exact-case prefix matches
-// first, then locale-aware alphabetical, with a code-point tiebreaker.
+// All known tags that start with the trimmed input, excluding tags that are
+// already selected. Comparison form: both sides are normalized to NFC first,
+// so composed and decomposed spellings (e.g. "é" vs "e\u0301") match in both
+// directions, then case-folded with toLocaleLowerCase for the active UI
+// locale (Unicode-aware locale case folding, e.g. German ß → ss stays
+// distinct from s, and Turkish dotted/dotless I rules would apply under a
+// "tr" locale — the shipped locales are EN and DE, where I ↔ i). This is a
+// locale-aware lowercase fold, not full Unicode case folding; rendered and
+// accepted tags always keep their stored spelling. Order is deterministic:
+// exact-case prefix matches first, then locale-aware alphabetical, with a
+// code-point tiebreaker.
 function matchingTags(value) {
   const typed = value.trim();
   if (!typed) return [];
   const locale = document.documentElement.lang || "en";
-  const lower = (text) => text.toLocaleLowerCase(locale);
-  const typedLower = lower(typed);
+  const fold = (text) => text.normalize("NFC").toLocaleLowerCase(locale);
+  const typedFolded = fold(typed);
+  const typedNfc = typed.normalize("NFC");
   const seen = new Set();
   const matches = [];
   for (const tag of getKnownTags()) {
     if (seen.has(tag)) continue;
     seen.add(tag);
     if (currentTags.includes(tag)) continue;
-    if (lower(tag).startsWith(typedLower)) matches.push(tag);
+    if (fold(tag).startsWith(typedFolded)) matches.push(tag);
   }
-  const caseRank = (tag) => (tag.startsWith(typed) ? 0 : 1);
+  const caseRank = (tag) => (tag.normalize("NFC").startsWith(typedNfc) ? 0 : 1);
   return matches.sort((a, b) => caseRank(a) - caseRank(b)
     || a.localeCompare(b, locale)
     || (a < b ? -1 : a > b ? 1 : 0));
@@ -108,9 +121,23 @@ function renderSuggestions() {
     li.className = index === activeIndex ? "tag-option active" : "tag-option";
     li.setAttribute("aria-selected", String(index === activeIndex));
     li.textContent = tag;
-    // Keep focus in the input: without this the mousedown would blur the
-    // input and close the list before the click can accept the option.
-    li.addEventListener("mousedown", (event) => event.preventDefault());
+    // Keep focus in the input: pointerdown (mouse, touch and pen) would
+    // otherwise blur the input and close the list before the click can
+    // accept the option. mousedown is kept as a fallback for environments
+    // without pointer events; both only prevent default (no accept), so the
+    // single click/tap handler below never double-accepts.
+    const keepFocus = (event) => {
+      pointerSelectionPending = true;
+      event.preventDefault();
+    };
+    li.addEventListener("pointerdown", keepFocus);
+    li.addEventListener("mousedown", keepFocus);
+    // A cancelled press (e.g. the finger drags away) ends the pending
+    // selection; if the input was already blurred, close the list now.
+    li.addEventListener("pointercancel", () => {
+      pointerSelectionPending = false;
+      if (!inputFocused) closeSuggestions();
+    });
     li.addEventListener("click", () => acceptSuggestion(tag));
     return li;
   }));
@@ -158,6 +185,7 @@ function moveActive(delta) {
 }
 
 function acceptSuggestion(tag) {
+  pointerSelectionPending = false;
   if (typeof tag !== "string" || !tag) return;
   if (!currentTags.includes(tag)) currentTags = [...currentTags, tag];
   const input = $("#tag-input");
@@ -177,10 +205,18 @@ export function initTags() {
   input.addEventListener("input", () => updateSuggestions());
   input.addEventListener("focus", () => {
     inputFocused = true;
+    pointerSelectionPending = false;
     updateSuggestions();
   });
   input.addEventListener("blur", () => {
     inputFocused = false;
+    // A blur caused by pressing an option must not destroy the list before
+    // the click/tap accepts it (the click handler closes it, pointercancel
+    // cleans up an abandoned press). Any other blur closes the list.
+    if (pointerSelectionPending) {
+      pointerSelectionPending = false;
+      return;
+    }
     closeSuggestions();
   });
   input.addEventListener("compositionstart", () => {

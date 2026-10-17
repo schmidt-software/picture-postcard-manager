@@ -20,8 +20,18 @@ class SortingDbTest(unittest.TestCase):
     def setUp(self):
         self.db = Database(":memory:")
         self.addCleanup(self.db.close)
-        for year in ("1920", "ca. 1910", "", "1910-1915", "unknown era"):
-            self.db.create({"front_image_path": "/f.jpg", "year": year})
+        entries = []
+        for postcard_id, year in enumerate(
+                ("1920", "ca. 1910", "", "1910-1915", "unknown era"), start=1):
+            entries.append({
+                "id": postcard_id,
+                "uuid": f"00000000-0000-4000-8000-{postcard_id:012d}",
+                "front_image_path": "/f.jpg", "back_image_path": "",
+                "year": year, "description": "", "tags": [],
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            })
+        self.db.import_data({"schema_version": 6, "postcards": entries}, mode="replace")
 
     def years(self, query=None, **kwargs):
         return [p["year"] for p in self.db.list(query, **kwargs)]

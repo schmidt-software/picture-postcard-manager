@@ -417,6 +417,45 @@ async function pointerSelectionTests() {
   assert.equal(list.hidden, true, "no timer may mutate the reset form");
   assert.deepEqual(chips(), [], "the new form must stay empty");
 
+  // Route navigation away from the edit view while a press is pending:
+  // the view transition must synchronously cancel the deferred blur-close
+  // timer and fully close the list (hidden, aria-expanded=false, no
+  // aria-activedescendant).
+  await run("openForm()");
+  await input.emit("focus");
+  input.value = "pav";
+  await input.emit("input");
+  await input.emit("keydown", { key: "ArrowDown", preventDefault() {} });
+  assert.equal(input.attributes["aria-activedescendant"], "tag-option-0");
+  await list.children[0].emit("pointerdown", { preventDefault() {} });
+  await input.emit("blur");
+  assert.equal(timers.size, 1, "the press-caused blur schedules the deferred close");
+  // Capture the queued callback: even if timer cancellation ever raced, a
+  // stale callback from the old lifecycle must be harmless.
+  const staleCallback = [...timers.values()][0];
+  await run('navigate("browse")');
+  await flush();
+  assert.equal(timers.size, 0, "navigating away must cancel the pending close timer");
+  assert.equal(list.hidden, true, "navigating away must close the list");
+  assert.equal(input.attributes["aria-expanded"], "false");
+  assert.equal("aria-activedescendant" in input.attributes, false,
+    "navigation must clear aria-activedescendant");
+
+  // A manually invoked stale callback (simulated cancellation race) must not
+  // mutate the state of a newly opened form.
+  await run(`openForm({ id: 9, front_image_path: "/f.jpg", tags: ["Kept"] })`);
+  await input.emit("focus");
+  input.value = "pa";
+  await input.emit("input");
+  assert.equal(list.hidden, false);
+  staleCallback();
+  assert.equal(list.hidden, false,
+    "a stale timer callback must not close the new form's list");
+  assert.deepEqual(chips(), ["Kept"], "a stale callback must not touch committed tags");
+  await input.emit("keydown", { key: "Escape", preventDefault() {} });
+  assert.equal(list.hidden, true);
+  await input.emit("blur");
+
   // An ordinary outside blur (no pending press) still closes the list
   // immediately, without scheduling a timer.
   await input.emit("focus");

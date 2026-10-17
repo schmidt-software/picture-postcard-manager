@@ -31,6 +31,10 @@ let composing = false;
 // close (Escape, reset, navigation, openForm) cancels both.
 let pointerSelectionPending = false;
 let pendingCloseTimer = null;
+// Generation token for the deferred close: closeSuggestions bumps it, so a
+// stale timer callback from an older lifecycle (form reset, navigation) is a
+// no-op even if its cancellation ever raced.
+let suggestionEpoch = 0;
 let announcedCount = -1;
 
 export function getTags() {
@@ -178,7 +182,9 @@ function updateSuggestions(keepActive = false) {
 
 function closeSuggestions() {
   // Closing resolves any in-flight pointer press: no timer may later mutate
-  // a reset or reopened form, and no stale reopen can happen.
+  // a reset or reopened form, and no stale reopen can happen. The epoch bump
+  // also neutralizes a stale callback should its cancellation ever race.
+  suggestionEpoch += 1;
   pointerSelectionPending = false;
   if (pendingCloseTimer !== null) {
     clearTimeout(pendingCloseTimer);
@@ -216,6 +222,16 @@ function acceptSuggestion(tag) {
   input.focus();
 }
 
+// Route/view lifecycle cleanup: synchronously closes the suggestion list,
+// resolves any pending pointer press and cancels the deferred blur-close
+// timer. Committed tags (currentTags) and the typed input are intentionally
+// left alone — leaving the edit view does not destroy form state, it only
+// guarantees that no autocomplete timer or popup outlives the view.
+export function resetTagSuggestions() {
+  inputFocused = false;
+  closeSuggestions();
+}
+
 export function initTags() {
   const input = $("#tag-input");
   $("#add-tag").addEventListener("click", () => {
@@ -246,8 +262,12 @@ export function initTags() {
     // without a pending press closes the list immediately.
     if (pointerSelectionPending) {
       if (pendingCloseTimer === null) {
+        const epoch = suggestionEpoch;
         pendingCloseTimer = setTimeout(() => {
           pendingCloseTimer = null;
+          // A stale callback from an older lifecycle (the form was reset or
+          // the view changed since) must not touch the current state.
+          if (epoch !== suggestionEpoch) return;
           pointerSelectionPending = false;
           if (!inputFocused) closeSuggestions();
         }, 250);

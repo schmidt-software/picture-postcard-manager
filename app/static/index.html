@@ -138,8 +138,16 @@
           </div>
           <span id="back-image-status" role="status" aria-live="polite"></span>
         </div>
-        <label><span data-i18n="year">Year</span><input name="year" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" aria-describedby="year-error"></label>
-        <p id="year-error" class="validation-error" role="alert" hidden></p>
+        <label><span data-i18n="year">Year</span>
+          <span class="tag-combobox">
+            <input id="year-input" name="year" autocomplete="off"
+                   role="combobox" aria-expanded="false" aria-controls="year-suggestions"
+                   aria-autocomplete="list" aria-haspopup="listbox">
+            <ul id="year-suggestions" class="tag-suggestions" role="listbox"
+                data-i18n-aria-label="yearSuggestions" aria-label="Year suggestions" hidden></ul>
+          </span>
+        </label>
+        <span id="year-status" class="visually-hidden" role="status" aria-live="polite"></span>
         <label><span data-i18n="description">Description</span><textarea name="description" rows="5"></textarea></label>
         <fieldset class="tags-field">
           <legend data-i18n="tags">Tags</legend>

@@ -31,6 +31,13 @@ export function getKnownTags() {
   return [...filterValues.tag];
 }
 
+// The distinct years of all existing postcards, as of the last successful
+// filter-values load (server-side order; stored spelling preserved). Source
+// of the year combobox suggestions in the entry form (issue #65).
+export function getKnownYears() {
+  return [...filterValues.year];
+}
+
 // Canonical tag-selection cleanup: strings only, blank and whitespace-only
 // values dropped, exact duplicates removed while the first occurrence keeps
 // its position. Non-blank values are preserved verbatim (stored spelling,

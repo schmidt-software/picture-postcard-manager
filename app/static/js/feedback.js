@@ -29,8 +29,7 @@ export function showApiError(error) {
 
 export function renderValidation() {
   for (const [id, key] of [
-    ["front-image-error", "requiredFrontImage"], ["year-error", "invalidYear"],
-    ["file-error", "requiredFile"],
+    ["front-image-error", "requiredFrontImage"], ["file-error", "requiredFile"],
   ]) {
     const el = $(`#${id}`);
     if (!el.hidden) el.textContent = translate(key);

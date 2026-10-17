@@ -32,7 +32,6 @@ export const apiErrorKeys = {
   "front_image_path is required and must be a non-empty string": "errorFrontImageRequired",
   "back_image_path must be a string or null": "errorBackImagePathType",
   "year must be a string or null": "errorYearType",
-  "year must be empty or exactly four digits (0-9)": "errorYearFormat",
   "description must be a string or null": "errorDescriptionType",
   "tags must be an array of strings": "errorTagsType",
   "tags must not be blank": "errorTagBlank",

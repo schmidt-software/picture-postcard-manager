@@ -31,7 +31,10 @@ class SortingDbTest(unittest.TestCase):
                 "created_at": "2026-01-01T00:00:00+00:00",
                 "updated_at": "2026-01-01T00:00:00+00:00",
             })
-        self.db.import_data({"schema_version": 6, "postcards": entries}, mode="replace")
+        self.db.import_data({
+            "format": "picture-postcard-manager", "schema_version": 6,
+            "exported_at": "2026-01-02T00:00:00+00:00", "postcards": entries,
+        }, mode="replace")
 
     def years(self, query=None, **kwargs):
         return [p["year"] for p in self.db.list(query, **kwargs)]

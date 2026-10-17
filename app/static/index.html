@@ -136,10 +136,17 @@
           <legend data-i18n="tags">Tags</legend>
           <ul id="tag-list" class="tag-list" data-i18n-aria-label="tags" aria-label="Tags"></ul>
           <div class="tag-add">
-            <input id="tag-input" data-i18n-aria-label="newTag" aria-label="New tag"
-                   data-i18n-placeholder="newTag" placeholder="New tag" autocomplete="off">
+            <div class="tag-combobox">
+              <input id="tag-input" data-i18n-aria-label="newTag" aria-label="New tag"
+                     data-i18n-placeholder="newTag" placeholder="New tag" autocomplete="off"
+                     role="combobox" aria-expanded="false" aria-controls="tag-suggestions"
+                     aria-autocomplete="list" aria-haspopup="listbox">
+              <ul id="tag-suggestions" class="tag-suggestions" role="listbox"
+                  data-i18n-aria-label="tagSuggestions" aria-label="Tag suggestions" hidden></ul>
+            </div>
             <button type="button" id="add-tag" data-i18n="addTag">Add tag</button>
           </div>
+          <span id="tag-status" class="visually-hidden" role="status" aria-live="polite"></span>
         </fieldset>
         <div class="actions">
           <button type="submit" id="save" data-i18n="save">Save</button>

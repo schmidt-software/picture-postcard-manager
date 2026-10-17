@@ -23,6 +23,7 @@ class Element {
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
   setAttribute(name, value) { this.attributes[name] = value; }
+  removeAttribute(name) { delete this.attributes[name]; }
   focus() { this.focused = true; }
   select() { this.selected = true; }
   click() { this.clicked = true; }

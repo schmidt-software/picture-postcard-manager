@@ -240,7 +240,7 @@ Buttons and form controls use touch-friendly targets. When entering text, the fo
 2. Choose the **Front image** preview. An empty preview says **No image selected. Opens the file picker.** Click, tap, or press Enter or Space. The accessible name is **Choose front image**.
 3. The selected file is shown at once. Nothing is uploaded until you choose **Save**.
 4. Optionally choose the **Back image** preview the same way. The back image is optional.
-5. Optionally add the year, description, and tags.
+5. Optionally add the four-digit year, description, and tags. Existing imported cards may still display older free-text years; correct or clear such a value before saving an edited card.
 6. Choose **Save**.
 
 The page says **Uploading image…** and then **Image uploaded.** while it stores the selected files. It then confirms **Postcard saved.** and returns to Browse.
@@ -249,7 +249,7 @@ The page says **Uploading image…** and then **Image uploaded.** while it store
 | --- | --- | --- |
 | **Front image** | Yes | A PNG, JPEG, GIF, or WebP file, up to 20 MiB |
 | **Back image** | No | The same kinds of file, or none |
-| **Year** | No | Free text, such as `1905`, `ca. 1910`, or `1910-1915` |
+| **Year** | No | Exactly four digits, such as `1905`; leave it empty when unknown |
 | **Description** | No | Any notes about the postcard |
 | **Tags** | No | Location and other labels; see [Tags and search](#tags-and-search) |
 

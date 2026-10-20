@@ -790,14 +790,98 @@ PPM_UID="$(id -u)" PPM_GID="$(id -g)" docker compose up -d --build
 
 ## Back up and restore
 
-> **Warning:** Stop the application before copying or restoring `/data`.
+> **Warning:** Stop the application before creating or restoring a backup.
 > Copying a live SQLite database can capture a partial write. JSON export does
 > not include image bytes, so it cannot restore the pictures.
 
-A complete backup is an archive of `/data`: `postcards.db`, any SQLite sidecar
-files, and `images/`. The `images/thumbs/` cache is optional.
+There are two ways to make a complete backup: the built-in backup command,
+which archives the records and the referenced images into one verified file,
+and a manual archive of the whole `/data` volume.
 
-### Back up the collection
+### Use the built-in backup command
+
+The backup command writes one archive containing the records, every
+referenced image, and a manifest with checksums. Restoring that archive
+checks everything first and refuses damaged or manipulated files before it
+changes anything.
+
+Docker Compose, from the Compose directory:
+
+```sh
+mkdir -p backups
+docker compose stop &&
+  docker compose run --rm --no-deps -v "$PWD/backups:/backups" app \
+    python -m app.backup create --output /backups &&
+  docker compose start
+```
+
+Direct Python run, from the application directory:
+
+```sh
+python3 -m app.backup create --output backups/
+```
+
+The command prints the archive name, for example
+`ppm-backup-20260101-120000.tar.gz`, and the number of postcards and images
+it contains. It never changes the collection. If a postcard references an
+image file that no longer exists, the command warns about it and finishes the
+backup without that file. Copy the archive somewhere outside the application
+directory and treat it as private: it contains the collection and the images.
+
+To restore, preview first. The dry run validates the complete archive and
+shows what would happen without changing anything:
+
+```sh
+docker compose stop &&
+  docker compose run --rm --no-deps -v "$PWD/backups:/backups" app \
+    python -m app.backup restore /backups/ppm-backup-20260101-120000.tar.gz --dry-run
+```
+
+Then restore. Into an empty instance no extra option is needed; when
+postcards already exist, or an image file on disk differs from the archived
+one, the command stops and asks for the explicit `--force` option:
+
+```sh
+docker compose run --rm --no-deps -v "$PWD/backups:/backups" app \
+  python -m app.backup restore /backups/ppm-backup-20260101-120000.tar.gz --force &&
+  docker compose up -d
+```
+
+Direct Python run:
+
+```sh
+python3 -m app.backup restore backups/ppm-backup-20260101-120000.tar.gz --dry-run
+python3 -m app.backup restore backups/ppm-backup-20260101-120000.tar.gz
+```
+
+What restore guarantees:
+
+- A corrupt, truncated, or manipulated archive is rejected before anything
+  is changed. File names, sizes, checksums, and image signatures are all
+  verified first, and the records are imported into a staged copy of the
+  database before any live file is touched.
+- The database switch is the last step. If a restore is interrupted, the
+  previous database is still in place; run the same command again.
+- By default (`--mode replace`) the restored collection keeps its original
+  ids, share UUIDs, tags, and timestamps, and existing records are removed.
+  With `--mode append` existing records stay and the archived postcards are
+  added as copies with new ids.
+- An image file that already exists with identical content is kept. A file
+  with different content is only overwritten with `--force`.
+
+The command uses `PPM_DB_PATH` and `PPM_IMAGE_DIR` (or `--db` and
+`--image-dir`) with the same defaults as the server, so inside the container
+it finds `/data` automatically. The database must already match the
+application's schema version when backing up; after an upgrade, start the
+application once so it migrates, then back up.
+
+### Manual volume archive
+
+A manual backup is an archive of `/data`: `postcards.db`, any SQLite sidecar
+files, and `images/`. The `images/thumbs/` cache is optional. Use it when you
+want a byte-exact copy of the whole volume, including orphaned uploads.
+
+### Back up the collection manually
 
 From the Compose directory:
 
@@ -821,14 +905,16 @@ private: it contains the collection and the images.
 For a direct Python install, stop `python3 -m app`, then archive the database
 file and the image directory with the same care. Do not copy only the database.
 
-### Restore a backup
+### Restore a manual backup
 
 > **Caution:** A restore replaces the current `/data` contents. Extracting an
 > archive over existing files can mix old images or database journal files
 > with the snapshot. The commands below first archive the current volume, then
 > empty `/data`, then extract the selected backup.
 
-Inspect the archive before restoring it. Put it in `backups/` and set
+Inspect the archive before restoring it. Manual `tar` archives and
+`app.backup` archives have different layouts; restore each with its own
+procedure. Put the manual archive in `backups/` and set
 `backup` to its file name:
 
 ```sh

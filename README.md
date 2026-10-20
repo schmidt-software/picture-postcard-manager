@@ -34,6 +34,7 @@ app/
   images.py        Validation and storage of uploaded images
   thumbs.py        Optional thumbnail cache for overview previews (uses Pillow when installed)
   cleanup.py       CLI to list or delete orphaned uploaded images and their thumbnails
+  backup.py        CLI to create and restore full backups (records and images)
   static/          Web UI (index.html, app.js, languages.js, style.css)
     js/            Focused ES modules loaded by app.js (no build step):
                    dom, api, i18n, feedback, preview, tags, upload, routing,
@@ -631,8 +632,92 @@ Restarts, container recreation and image rebuilds keep the volume and its data.
 ### Complete backup and restore
 
 **JSON export is not a full backup:** it contains records and image paths, but
-no image bytes. A full backup must copy the SQLite database **and** the complete
-image directory together. The commands below archive the whole `/data` volume,
+no image bytes. A full backup must copy the SQLite database **and** the
+referenced image files together.
+
+#### Built-in backup command
+
+The `app.backup` command creates one portable archive containing the JSON
+export, all referenced uploaded images, and a checksummed manifest (see
+[Backup archive format](#backup-archive-format)); it restores such an archive
+with full validation, a dry-run preview and explicit collision confirmation.
+Stop the application while creating or restoring a backup so the copy is
+consistent.
+
+```sh
+python3 -m app.backup create --output backups/
+python3 -m app.backup restore backups/ppm-backup-20260101-120000.tar.gz --dry-run
+python3 -m app.backup restore backups/ppm-backup-20260101-120000.tar.gz
+```
+
+In the Docker setup, run it inside the container with a mounted backup
+directory (the application should be stopped; the one-off container does not
+need the running app):
+
+```sh
+mkdir -p backups
+docker compose stop &&
+  docker compose run --rm --no-deps -v "$PWD/backups:/backups" app \
+    python -m app.backup create --output /backups &&
+  docker compose start
+```
+
+```sh
+docker compose stop &&
+  docker compose run --rm --no-deps -v "$PWD/backups:/backups" app \
+    python -m app.backup restore /backups/ppm-backup-20260101-120000.tar.gz --force &&
+  docker compose up -d
+```
+
+It uses `PPM_DB_PATH` and `PPM_IMAGE_DIR` (or `--db` and `--image-dir`) with
+the same defaults as the server. Key properties:
+
+- **Backup never modifies live data.** The database is opened read-only and
+  image files are only read. The database must already be at the current
+  schema version (start the matching application version once to migrate
+  first); an older or newer schema is rejected instead of being migrated
+  implicitly. A referenced image that is missing on disk is reported and
+  recorded in the manifest; the backup still succeeds. Orphaned uploads and
+  the derived `images/thumbs/` cache are not included.
+- **Restore validates everything before any mutation.** The member allowlist
+  rejects path traversal, symlinks, hard links and unexpected files; image
+  sizes, SHA-256 checksums and file signatures are verified; and the records
+  are imported into a staged copy of the database first. A corrupt,
+  truncated, tampered or incompatible archive fails with a clear error and
+  changes nothing.
+- **Restore is atomic for the database.** Images are placed with atomic
+  renames and the staged database replaces the live one as the final
+  committing step, so an interrupted restore never leaves a partially
+  mutated database; simply re-run it.
+- `--dry-run` prints the full preview (record and image counts, collisions,
+  missing images) and changes nothing.
+- **Existing data needs explicit confirmation.** Restoring into an instance
+  that already contains postcards, or overwriting an image file whose
+  content differs, fails without `--force`. Image files whose content is
+  already identical are skipped silently. `--mode replace` (default) keeps
+  the archived ids and uuids and removes existing records; `--mode append`
+  keeps existing records and adds copies with new ids and uuids.
+
+#### Backup archive format
+
+A backup is a gzip-compressed tar archive, **backup format version 1**,
+with exactly these members:
+
+| Member | Content |
+|--------|---------|
+| `manifest.json` | Format marker `picture-postcard-manager-backup`, `backup_version`, database `schema_version`, `created_at`, `postcard_count`, per-image `size` and `sha256`, and `missing_images` |
+| `postcards.json` | The regular [JSON export payload](#json-export-format), identical to `GET /api/export` |
+| `images/<name>` | The referenced uploaded image files (generated names only) |
+
+Restore accepts only this exact structure; archives produced by the manual
+`tar` procedure below are not `app.backup` archives (restore them manually as
+documented). The `schema_version` follows the JSON export versioning, so a
+newer application restores older backups through the regular import
+migration rules, while an older application rejects a newer backup cleanly.
+
+#### Manual volume archive (alternative)
+
+The commands below archive the whole `/data` volume,
 including any SQLite journal files. The cached thumbnails under
 `images/thumbs/` are derived data: they are regenerated automatically from the
 originals, so they are optional in backups and may be excluded to save space.

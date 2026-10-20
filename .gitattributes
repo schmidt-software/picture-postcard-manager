@@ -1,0 +1,5 @@
+# Launcher line endings must be stable regardless of core.autocrlf:
+# run.sh needs LF for POSIX shells, run.cmd needs CRLF for cmd.exe
+# (labels and multi-line parsing misbehave with LF-only batch files).
+run.sh text eol=lf
+run.cmd text eol=crlf

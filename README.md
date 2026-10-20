@@ -45,6 +45,8 @@ compose.yaml       Docker Compose setup
 compose.proxy.yaml Optional overlay: Caddy reverse proxy with TLS and basic auth
 proxy/Caddyfile    Caddy configuration for the proxy overlay
 requirements-optional.txt  Optional dependencies (Pillow, only for thumbnails)
+run.sh             Launcher (macOS/Linux): published image + data volume + browser
+run.cmd            Launcher (Windows): same behavior as run.sh
 ```
 
 The frontend is split into small native ES modules under `app/static/js/`;
@@ -826,6 +828,61 @@ replacing `build: .` with
 `image: ghcr.io/schmidt-software/picture-postcard-manager:0.1.0` in
 `compose.yaml`; everything else (volume, healthcheck, port mapping) stays the
 same.
+
+### Launcher scripts (run.cmd / run.sh)
+
+Two launcher scripts in the repository root run the published image without
+typing the `docker run` command: **`run.cmd`** for Windows and **`run.sh`**
+for macOS and Linux (committed executable, Git mode `100755`; a
+`.gitattributes` entry pins `run.sh` to LF and `run.cmd` to CRLF line
+endings, so checkouts work on every platform). Prerequisite is an installed
+and running Docker.
+
+```sh
+./run.sh        # macOS / Linux
+```
+
+```bat
+run.cmd         :: Windows (or double-click it in Explorer)
+```
+
+Both launchers behave identically:
+
+- They create the named volume `postcard-data` when needed and mount it at
+  `/data` (database `/data/postcards.db`, images `/data/images/`) — the same
+  volume and layout as the documented `docker run` command above. An existing
+  volume is reused unchanged; the launchers contain no destructive Docker
+  flags and never remove containers, volumes, or images.
+- On the first run they create the container `picture-postcard-manager` from
+  `ghcr.io/schmidt-software/picture-postcard-manager:latest`, published on
+  the loopback interface only (`127.0.0.1`). On later runs they reuse the
+  existing container: running → kept, stopped → started. Reruns are safe and
+  lose no data.
+- They wait until `GET /api/health` is reachable (bounded, 90 seconds by
+  default) and only then open <http://127.0.0.1:8000> in the default browser
+  (`start` on Windows, `open` on macOS, `xdg-open` on Linux). A timeout or a
+  missing/stopped Docker daemon produces a clear error instead of a broken
+  browser tab.
+
+Optional environment variables: `PPM_PORT` (host port, default `8000`),
+`PPM_IMAGE_TAG` (image tag, default `latest`) and `PPM_WAIT_SECONDS` (health
+timeout, default `90`). Port and tag are applied when the container is
+created; to change them later, stop and remove the container (the data volume
+is kept) and run the launcher again:
+
+```sh
+docker stop picture-postcard-manager
+docker rm picture-postcard-manager    # The postcard-data volume is kept
+PPM_PORT=18008 ./run.sh
+```
+
+Stop with `docker stop picture-postcard-manager`; either launcher (or
+`docker start picture-postcard-manager`) starts it again with all data
+intact. To update to a new release, stop and remove the container as above
+and rerun the launcher. `tests/test_launchers.py` checks the launcher
+filenames, Git modes, line endings, quoting, volume handling, readiness
+gating and safe-rerun behavior statically and (on POSIX hosts) at runtime
+against stub commands — no Docker daemon required.
 
 ## Release announcements (Mastodon)
 

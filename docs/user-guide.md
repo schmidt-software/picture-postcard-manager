@@ -184,6 +184,53 @@ The published image runs as the unprivileged user `ppm` (user id 1000, group
 id 1000) and includes Pillow. Its footer shows the release version baked into
 that image.
 
+### Start with the launcher scripts
+
+The repository ships two launcher scripts that run the published image
+without composing the `docker run` command by hand: `run.cmd` for Windows and
+`run.sh` for macOS and Linux. Both launchers:
+
+- Create the Docker volume `postcard-data` when it does not exist and mount
+  it at `/data`. An existing volume and its contents are never touched.
+- Create the container `picture-postcard-manager` from
+  `ghcr.io/schmidt-software/picture-postcard-manager:latest` on the first
+  run, published on loopback only (`127.0.0.1`).
+- Reuse the container on later runs: a running container is kept as is, and a
+  stopped container is started again. Running a launcher twice never creates
+  a second container and never deletes data.
+- Wait until `/api/health` answers, up to 90 seconds, and only then open
+  <http://127.0.0.1:8000> in the default browser. On a timeout they print the
+  `docker logs` command to inspect instead of opening a broken page.
+- Stop with a clear error when Docker is not installed or its daemon is not
+  running.
+
+On Windows, double-click `run.cmd` or run it in a terminal. On macOS or
+Linux, run the script from the checkout directory:
+
+```sh
+./run.sh
+```
+
+Three optional environment variables adjust the launchers: `PPM_PORT`
+selects the host port (default 8000), `PPM_IMAGE_TAG` selects the image tag
+(default `latest`), and `PPM_WAIT_SECONDS` bounds the health wait (default
+90). The port and tag take effect when the container is created; to change
+them later, stop and remove the container first (the data volume and all
+postcards are kept) and run the launcher again:
+
+```sh
+docker stop picture-postcard-manager
+docker rm picture-postcard-manager
+PPM_PORT=18008 ./run.sh
+```
+
+Stop the launched container with `docker stop picture-postcard-manager` and
+start it again with either launcher or `docker start
+picture-postcard-manager`. To update, stop and remove the container as above,
+then run the launcher again after the new release is published; the volume
+and your collection are kept. The launchers never remove containers, volumes,
+or images themselves.
+
 ## First start and stored data
 
 On first start the application creates an empty database and an empty image

@@ -70,6 +70,12 @@ export function loadSavedFilters() {
   }
 }
 
+export function setFilters(filters) {
+  currentFilters = { year: typeof filters?.year === "string" ? filters.year : "", tag: cleanTagSelection(filters?.tag) };
+  saveFilters();
+  renderFilterOptions();
+}
+
 export function saveFilters() {
   try {
     localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(currentFilters));

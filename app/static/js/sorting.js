@@ -19,6 +19,15 @@ export function loadSavedSort() {
   }
 }
 
+export function setSort(sort) {
+  currentSort = {
+    key: SORT_KEYS.includes(sort?.key) ? sort.key : "",
+    direction: ["asc", "desc"].includes(sort?.direction) ? sort.direction : "asc",
+  };
+  saveSort();
+  renderSortControls();
+}
+
 export function saveSort() {
   try {
     localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(currentSort));

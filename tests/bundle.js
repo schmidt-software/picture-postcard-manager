@@ -9,7 +9,7 @@ const path = require("node:path");
 const MODULE_ORDER = [
   "js/dom.js", "js/api.js", "js/i18n.js", "js/footer.js", "js/feedback.js", "js/preview.js",
   "js/upload.js", "js/routing.js", "js/sorting.js",
-  "js/filters.js", "js/tags.js", "js/year.js", "js/detail.js", "js/overview.js", "js/form.js",
+  "js/filters.js", "js/tags.js", "js/year.js", "js/saved_views.js", "js/detail.js", "js/overview.js", "js/form.js",
   "js/import.js", "js/bulk.js", "app.js",
 ];
 

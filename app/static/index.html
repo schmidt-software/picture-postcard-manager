@@ -34,6 +34,14 @@
         <button type="button" id="sort-direction" data-i18n="sortAscending"
                 aria-pressed="false" hidden>Ascending</button>
       </div>
+      <div class="saved-view-controls" aria-label="Saved views">
+        <label for="saved-view-select" data-i18n="savedViews">Saved views</label>
+        <select id="saved-view-select"><option value="" data-i18n="savedViewChoose">Choose a saved view…</option></select>
+        <button type="button" id="saved-view-save" data-i18n="savedViewSave">Save view</button>
+        <button type="button" id="saved-view-copy" data-i18n="savedViewCopy">Copy link</button>
+        <button type="button" id="saved-view-rename" data-i18n="savedViewRename" disabled>Rename view</button>
+        <button type="button" id="saved-view-delete" data-i18n="savedViewDelete" disabled>Delete view</button>
+      </div>
       <div class="filter-controls">
         <label><span data-i18n="year">Year</span>
           <select id="filter-year" data-filter="year"></select>

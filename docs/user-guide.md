@@ -394,6 +394,8 @@ Search, filters, and sorting combine. The first page shows up to 100
 postcards. **Show more postcards** appends the next page in the same order.
 Changing the search, a filter, or the sort returns to the first page.
 
+Use **Saved views** to keep a named combination of the search text, year and tag filters, and sort order. Choose **Save view** and enter a name; saving the same name replaces its definition. Choose a saved view to reopen it, **Rename view** to change its name, **Delete view** to remove it, or **Copy link** to copy a shareable URL containing the exact overview parameters. Saved views are stored only in this browser and contain no postcard data. A copied link remains valid even when the named view is later deleted.
+
 The browser remembers the language, sort, and filters for this site. It does not remember postcard text there. On Browse, the address is the source for the tag selection. If storage is blocked, the choices still work until you reload the page.
 
 A filter value that no longer exists can remain selected and then match

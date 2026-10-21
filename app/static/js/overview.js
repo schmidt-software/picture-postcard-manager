@@ -6,13 +6,40 @@ import { translate, registerRenderer } from "./i18n.js";
 import { showMessage, showApiError, askConfirmation } from "./feedback.js";
 import { imagePreview } from "./preview.js";
 import { navigate, leavePostcard, currentRouteRequest } from "./routing.js";
-import { currentSort, initSorting } from "./sorting.js";
-import { currentFilters, loadFilterOptions, initFilters } from "./filters.js";
+import { currentSort, initSorting, setSort } from "./sorting.js";
+import { currentFilters, loadFilterOptions, initFilters, setFilters } from "./filters.js";
+import { initSavedViews } from "./saved_views.js";
 
 // Overview pagination: number of rows fetched per request, the rows loaded so
 // far (also re-rendered after a language change), and whether the last page
 // was short (no more rows on the server).
 export const PAGE_SIZE = 100;
+
+export function overviewState() {
+  return { q: $("#search").value.trim(), year: currentFilters.year, tag: currentFilters.tag,
+    sort: currentSort.key, dir: currentSort.key ? currentSort.direction : "" };
+}
+
+export function syncOverviewUrl() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.has("q")) $("#search").value = params.get("q") || "";
+  if (params.has("year")) setFilters({ year: params.get("year") || "", tag: currentFilters.tag });
+  if (params.has("sort") || params.has("dir")) {
+    setSort({ key: params.get("sort") || "", direction: params.get("dir") || "asc" });
+  }
+}
+
+export function applyOverviewState(raw) {
+  const url = new URL(raw, window.location.href);
+  const params = url.searchParams;
+  $("#search").value = params.get("q") || "";
+  setFilters({ year: params.get("year") || "", tag: params.getAll("tag") });
+  setSort({ key: params.get("sort") || "", direction: params.get("dir") || "asc" });
+  const next = new URL(window.location.href);
+  next.search = url.search;
+  window.history.replaceState(window.history.state, "", next);
+  return loadList();
+}
 let currentItems = null;
 let listComplete = true;
 let listRequest = 0;
@@ -160,6 +187,7 @@ export async function deletePostcard(id) {
 
 export function initOverview() {
   let searchTimer;
+  initSavedViews({ getState: overviewState, applyState: applyOverviewState });
   $("#search").addEventListener("input", () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => loadList(), 250);

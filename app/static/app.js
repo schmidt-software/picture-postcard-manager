@@ -13,7 +13,7 @@ import { initDetail, openDetail, clearCurrentDetail } from "./js/detail.js";
 import { initForm, openEdit, openForm } from "./js/form.js";
 import { initImport } from "./js/import.js";
 import { initBulkImport } from "./js/bulk.js";
-import { initOverview, loadList } from "./js/overview.js";
+import { initOverview, loadList, syncOverviewUrl } from "./js/overview.js";
 import { loadFilterOptions, syncFiltersFromUrl, renderFilterOptions } from "./js/filters.js";
 import { initRouting, route } from "./js/routing.js";
 
@@ -33,6 +33,7 @@ initRouting({
   onBrowse() {
     // Reconcile the tag selection with the URL first (shared URLs, reload,
     // Back/Forward), so the list request below already uses it.
+    syncOverviewUrl();
     if (syncFiltersFromUrl()) renderFilterOptions();
     loadFilterOptions();
     return loadList();

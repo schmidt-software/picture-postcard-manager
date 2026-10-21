@@ -19,7 +19,8 @@ button.danger { background: #cf222e; color: #fff; border-color: #cf222e; }
 input, textarea, select { font: inherit; font-size: max(1rem, 16px); min-height: 44px; box-sizing: border-box; padding: 0.4rem; border: 1px solid var(--border); border-radius: 6px; }
 input[type="search"] { width: 100%; box-sizing: border-box; margin-bottom: 1rem; }
 .sort-controls { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
-.filter-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 0.75rem; margin-bottom: 1rem; }
+.filter-controls, .saved-view-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 0.75rem; margin-bottom: 1rem; }
+.saved-view-controls label { display: flex; flex-direction: column; gap: 0.25rem; }
 .filter-controls label { display: flex; flex-direction: column; gap: 0.25rem; }
 /* Multi-tag filter (issue #52): chips wrap, the add-select and clear button
    stay usable on narrow screens without horizontal overflow. */
